@@ -1,0 +1,127 @@
+import { BootstrapConfig, LoginResponse } from "./types";
+
+const GATEWAY_BASE = "/api/gateway";
+
+export async function fetchBootstrapConfig(): Promise<BootstrapConfig> {
+  const res = await fetch(`${GATEWAY_BASE}/__openclaw/control-ui-config.json`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch bootstrap config: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function login(
+  email: string,
+  password: string
+): Promise<LoginResponse> {
+  const res = await fetch(`${GATEWAY_BASE}/__openclaw/control-ui-login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(
+      data?.error?.message || `Login failed with status ${res.status}`
+    );
+  }
+  return res.json();
+}
+
+export interface ChatCompletionOptions {
+  token: string;
+  messages: Array<{ role: string; content: string }>;
+  model?: string;
+  sessionKey?: string;
+  agentId?: string;
+  onDelta: (text: string) => void;
+  onDone: () => void;
+  onError: (error: Error) => void;
+  signal?: AbortSignal;
+}
+
+export async function streamChatCompletion(
+  opts: ChatCompletionOptions
+): Promise<void> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${opts.token}`,
+  };
+
+  if (opts.sessionKey) {
+    headers["X-OpenClaw-Session-Key"] = opts.sessionKey;
+  }
+
+  const body = {
+    model: opts.agentId || opts.model || "openclaw",
+    stream: true,
+    messages: opts.messages,
+  };
+
+  try {
+    const res = await fetch(`${GATEWAY_BASE}/v1/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: opts.signal,
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => null);
+      throw new Error(
+        errData?.error?.message || `Chat request failed: ${res.status}`
+      );
+    }
+
+    const reader = res.body?.getReader();
+    if (!reader) {
+      throw new Error("No response body reader available");
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed === ":" || trimmed === "data: [DONE]") {
+          if (trimmed === "data: [DONE]") {
+            opts.onDone();
+            return;
+          }
+          continue;
+        }
+
+        if (trimmed.startsWith("data: ")) {
+          const jsonStr = trimmed.slice(6);
+          try {
+            const parsed = JSON.parse(jsonStr);
+            const delta = parsed.choices?.[0]?.delta?.content;
+            if (delta) {
+              opts.onDelta(delta);
+            }
+            const finishReason = parsed.choices?.[0]?.finish_reason;
+            if (finishReason === "stop") {
+              opts.onDone();
+              return;
+            }
+          } catch {
+            // Skip malformed JSON lines
+          }
+        }
+      }
+    }
+
+    opts.onDone();
+  } catch (err) {
+    if ((err as Error).name === "AbortError") return;
+    opts.onError(err as Error);
+  }
+}
