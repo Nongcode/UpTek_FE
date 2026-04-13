@@ -194,7 +194,8 @@ export default function Home() {
     // Create new conversation if none active
     if (!targetConvId || !currentConv) {
       currentConv = createConversation(viewingAgentId);
-      currentConv.employeeId = employeeId;
+      // Gán employeeId đúng: nếu đang xem cấp dưới thì dùng ID cấp dưới
+      currentConv.employeeId = targetLoadId ?? undefined;
       targetConvId = currentConv.id;
       setConversations((prev) => [currentConv!, ...prev]);
       setActiveId(targetConvId);

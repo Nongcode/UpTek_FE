@@ -52,8 +52,14 @@ export async function streamChatCompletion(
     headers["X-OpenClaw-Session-Key"] = opts.sessionKey;
   }
 
+  // Gửi agent ID qua header để Gateway route chính xác đến đúng bộ não agent
+  if (opts.agentId) {
+    headers["X-OpenClaw-Agent-Id"] = opts.agentId;
+  }
+
   const body = {
-    model: opts.agentId || opts.model || "openclaw",
+    // Gateway yêu cầu format "openclaw/<agentId>" hoặc "agent:<agentId>" để parse đúng
+    model: opts.agentId ? `openclaw/${opts.agentId}` : (opts.model || "openclaw"),
     stream: true,
     messages: opts.messages,
   };

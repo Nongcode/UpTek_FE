@@ -74,7 +74,8 @@ export function createConversation(
   projectId?: string
 ): Conversation {
   const id = `conv_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-  const sessionKey = `thread:${agentId}:${id}`;
+  // Format chuẩn Gateway: agent:<agentId>:<mainKey>
+  const sessionKey = `agent:${agentId}:${id}`;
   return {
     id,
     title: "Cuộc trò chuyện mới",
