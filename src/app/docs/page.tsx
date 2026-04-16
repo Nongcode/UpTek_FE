@@ -22,21 +22,28 @@ export default function DocsPage() {
   ];
 
   useEffect(() => {
-    const handleScroll = () => {
-      const sections = navLinks.map(link => document.getElementById(link.id));
-      const scrollPosition = window.scrollY + 100;
-
-      for (let i = sections.length - 1; i >= 0; i--) {
-        const section = sections[i];
-        if (section && section.offsetTop <= scrollPosition) {
-          setActiveSection(navLinks[i].id);
-          break;
-        }
-      }
+    const observerOptions = {
+      root: document.querySelector(".docs-page-wrapper"),
+      rootMargin: "-20% 0px -70% 0px",
+      threshold: 0,
     };
 
-    window.addEventListener("scroll", handleScroll);
-    return () => window.removeEventListener("scroll", handleScroll);
+    const handleIntersection = (entries: IntersectionObserverEntry[]) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          setActiveSection(entry.target.id);
+        }
+      });
+    };
+
+    const observer = new IntersectionObserver(handleIntersection, observerOptions);
+
+    navLinks.forEach((link) => {
+      const element = document.getElementById(link.id);
+      if (element) observer.observe(element);
+    });
+
+    return () => observer.disconnect();
   }, []);
 
   const roles = [
@@ -93,13 +100,13 @@ export default function DocsPage() {
     { title: "Duyệt nội dung", content: "Duyệt hoặc yêu cầu sửa bản nháp từ nv_content. Cần rõ ràng về phần muốn sửa." },
     { title: "Tạo & Duyệt ảnh", content: "Hệ thống tự động chuyển sang tạo ảnh sau khi chốt văn bản. Phản hồi màu sắc/bố cục." },
     { title: "Quyết định nhánh", content: "Sau khi duyệt ảnh, chọn tiếp tục Tạo Video, Đăng ngay hoặc Hẹn giờ đăng." },
-    { title: "Duyệt video", content: "Nếu chọn tạo video, hãy duyệt/sửa về tốc độ, chuyển cảnh, âm thanh." },
+    { title: "Duyệt video", content: "Nếu chọn sửa video, hãy phản hồi về video: chuyển bối cảnh, âm thanh, ... Không thay đổi độ dài video (video mặc định dài 8s)" },
     { title: "Xuất bản & Reset", content: "Đăng bài thành công. BẮT BUỘC gõ /reset để làm sạch ngữ cảnh cho bài mới." },
   ];
 
   return (
     <div className="docs-page-wrapper">
-      <Link href="/" className="docs-back-button">
+      <Link href="http://localhost:18789/chat?session=agent%3Apho_phong%3Amain&employeeId=pho_phong&employeeName=Ph%C3%B3+ph%C3%B2ng" className="docs-back-button">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <line x1="19" y1="12" x2="5" y2="12" />
           <polyline points="12 19 5 12 12 5" />
@@ -127,6 +134,7 @@ export default function DocsPage() {
                 className={`sidebar-nav-link ${activeSection === link.id ? "active" : ""}`}
                 onClick={(e) => {
                   e.preventDefault();
+                  setActiveSection(link.id);
                   document.getElementById(link.id)?.scrollIntoView({ behavior: "smooth" });
                 }}
               >
@@ -151,14 +159,15 @@ export default function DocsPage() {
               <h2 className="doc-section-title">2. Thông tin truy cập</h2>
               <p className="doc-text">Truy cập hệ thống qua link mạng nội bộ:</p>
               <div className="command-code-wrapper" style={{ marginBottom: "1.5rem" }}>
-                <code className="command-code">http://192.168.35.210:18789</code>
+                <code className="command-code"><a href="http://192.168.35.210:18789" style={{ textDecoration: "none", color: "white" }}>http://192.168.35.210:18789</a></code>
               </div>
               <div className="info-box important">
                 <div className="info-box-title">⚠️ Yêu cầu bắt buộc</div>
                 <p className="doc-text" style={{ fontSize: "0.95rem", margin: 0 }}>
                   1. Truy cập đúng link nêu trên. <br />
                   2. Chọn đúng tài khoản <strong>Phó phòng</strong>. <br />
-                  3. Thực hiện toàn bộ trao đổi tại khung chat của Phó phòng.
+                  3. Thực hiện toàn bộ trao đổi tại khung chat của Phó phòng. <br />
+                  4. Địa chỉ truy cập hệ thống AI chỉ hoạt động khi người dùng sử dụng mạng nội bộ công ty.
                 </p>
               </div>
             </div>
@@ -276,7 +285,7 @@ export default function DocsPage() {
               <h2 className="doc-section-title">9. Mẫu câu lệnh khuyến nghị cho người dùng</h2>
               <div className="command-list" style={{ gap: "1rem" }}>
                 <div className="role-card">
-                  <strong>Khởi động:</strong> "Viết bài quảng cáo sản phẩm A cho nữ 25-35 tuổi, tone thân thiện."
+                  <strong>Khởi động:</strong> "Triển khai quảng cáo sản phẩm "(Tên sản phẩm lấy từ website)" cho tôi.
                 </div>
                 <div className="role-card">
                   <strong>Sửa ảnh:</strong> "Thêm logo rõ hơn", "Làm ảnh phong cách sang trọng hơn."
