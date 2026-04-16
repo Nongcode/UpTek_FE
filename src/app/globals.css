@@ -21,6 +21,10 @@
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
   --nav-width: 280px;
+  /* Component Specific */
+  --docs-btn-bg: rgba(30, 41, 59, 0.5);
+  --version-badge-bg: rgba(15, 23, 42, 0.4);
+  --sidebar-item-hover: var(--bg-hover);
 }
 
 /* Light theme overrides - toggled with html[data-theme="light"] */
@@ -40,6 +44,10 @@ html[data-theme="light"] {
   --input-focus-border-color: rgba(37, 99, 235, 0.5);
   --input-focus-shadow-color: rgba(37, 99, 235, 0.18);
   --border-color: rgba(15, 23, 42, 0.08);
+  /* Component Specific Overrides */
+  --docs-btn-bg: rgba(37, 99, 235, 0.1);
+  --version-badge-bg: rgba(241, 245, 249, 1);
+  --sidebar-item-hover: transparent;
 }
 
 * {
@@ -122,8 +130,8 @@ body {
 }
 
 .agent-selector-btn.interactive:hover {
-  background: rgba(255,255,255,0.03);
-  border-color: rgba(255,255,255,0.04);
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.04);
   transform: translateY(-1px);
 }
 
@@ -209,7 +217,7 @@ body {
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border-color);
   border-radius: 12px;
-  box-shadow: 0 12px 40px rgba(2,6,23,0.45), var(--shadow-lg);
+  box-shadow: 0 12px 40px rgba(2, 6, 23, 0.45), var(--shadow-lg);
   min-width: 280px;
   max-width: 380px;
   max-height: 420px;
@@ -220,7 +228,7 @@ body {
   flex-direction: column;
   gap: 0.25rem;
   transform-origin: top left;
-  animation: popdown 180ms cubic-bezier(.22,1,.36,1) both;
+  animation: popdown 180ms cubic-bezier(.22, 1, .36, 1) both;
 }
 
 .agent-dropdown::before {
@@ -237,8 +245,15 @@ body {
 }
 
 @keyframes popdown {
-  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 /* =========================================
@@ -412,7 +427,7 @@ body {
 .agent-option.selected {
   background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
   color: #fff;
-  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.04);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.04);
 }
 
 .agent-option-avatar {
@@ -979,7 +994,7 @@ body {
 }
 
 .sidebar-conversation:hover {
-  background: var(--bg-hover);
+  background: var(--sidebar-item-hover);
   color: var(--text-primary);
 }
 
@@ -1681,7 +1696,7 @@ h4.md-heading {
   align-items: center;
   justify-content: space-between;
   padding: 0.75rem 1rem;
-  background: rgba(30, 41, 59, 0.5);
+  background: var(--docs-btn-bg);
   border: 1px solid var(--border-color);
   border-radius: 12px;
   color: var(--text-primary);
@@ -1693,7 +1708,6 @@ h4.md-heading {
 }
 
 .docs-button:hover {
-  background: rgba(51, 65, 85, 0.6);
   border-color: var(--accent-primary);
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
@@ -1724,7 +1738,7 @@ h4.md-heading {
   align-items: center;
   justify-content: space-between;
   padding: 0.6rem 1rem;
-  background: rgba(15, 23, 42, 0.4);
+  background: var(--version-badge-bg);
   border: 1px solid var(--border-color);
   border-radius: 12px;
   font-size: 0.75rem;
@@ -1755,7 +1769,7 @@ h4.md-heading {
   width: 100vw;
   overflow-y: auto;
   background-color: var(--bg-dark);
-  background-image: 
+  background-image:
     radial-gradient(circle at 15% 50%, var(--bg-accent-1), transparent 25%),
     radial-gradient(circle at 85% 30%, var(--bg-accent-2), transparent 25%);
 }
@@ -1774,8 +1788,8 @@ h4.md-heading {
 .docs-header h1 {
   font-size: 3rem;
   font-weight: 800;
-  margin-bottom: 1rem;
-  background: linear-gradient(135deg, #fff 0%, var(--text-secondary) 100%);
+  margin-bottom: 0.5rem;
+  background: linear-gradient(135deg, var(--text-primary) 0%, var(--accent-primary) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
@@ -1802,11 +1816,21 @@ h4.md-heading {
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+html[data-theme="light"] .docs-section {
+  background: white;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+}
+
 .docs-section:hover {
   transform: translateY(-8px);
   box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.5);
   border-color: rgba(129, 140, 248, 0.4);
   background: rgba(30, 41, 59, 0.85);
+}
+
+html[data-theme="light"] .docs-section:hover {
+  background: white;
+  border-color: var(--accent-primary);
 }
 
 .docs-section h2 {
@@ -1886,4 +1910,236 @@ h4.md-heading {
   background: var(--bg-hover);
   border-color: var(--accent-primary);
   transform: translateX(-5px);
+}
+
+/* =========================================
+   Advanced Documentation Layout
+ ========================================= */
+.docs-content-layout {
+  display: flex;
+  gap: 3rem;
+  max-width: 1200px;
+  margin: 0 auto;
+  position: relative;
+}
+
+.docs-sidebar-nav {
+  position: sticky;
+  top: 6rem;
+  width: 260px;
+  height: fit-content;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-right: 1.5rem;
+  border-right: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+@media (max-width: 1024px) {
+  .docs-sidebar-nav {
+    display: none;
+  }
+  .docs-content-layout {
+    flex-direction: column;
+  }
+}
+
+.sidebar-nav-link {
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.sidebar-nav-link:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.sidebar-nav-link.active {
+  background: var(--active-bg);
+  color: var(--accent-primary);
+  font-weight: 600;
+}
+
+.docs-main-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4rem;
+  padding-bottom: 8rem;
+}
+
+.doc-section {
+  scroll-margin-top: 6rem;
+}
+
+.doc-section-title {
+  font-size: 1.75rem;
+  font-weight: 700;
+  margin-bottom: 1.5rem;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.doc-text {
+  color: var(--text-secondary);
+  line-height: 1.7;
+  font-size: 1.05rem;
+  margin-bottom: 1.5rem;
+}
+
+/* Info Box / Warning */
+.info-box {
+  padding: 1.5rem;
+  border-radius: 16px;
+  background: rgba(129, 140, 248, 0.05);
+  border: 1px solid rgba(129, 140, 248, 0.2);
+  margin: 2rem 0;
+}
+
+.info-box.important {
+  background: rgba(245, 158, 11, 0.05);
+  border-color: rgba(245, 158, 11, 0.2);
+}
+
+.info-box-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 700;
+  font-size: 1rem;
+  margin-bottom: 0.75rem;
+  color: var(--accent-primary);
+}
+
+.info-box.important .info-box-title {
+  color: #fbbf24;
+}
+
+/* Role Cards */
+.role-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.5rem;
+}
+
+.role-card {
+  padding: 1.5rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  backdrop-filter: var(--glass-blur);
+}
+
+.role-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.role-card-title {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.role-card-tasks {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.role-card-tasks li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.role-card-tasks li::before {
+  content: "•";
+  color: var(--accent-primary);
+  font-weight: bold;
+}
+
+/* Steps */
+.steps-container {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.step-item {
+  display: flex;
+  gap: 1.5rem;
+}
+
+.step-number {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 0.25rem;
+}
+
+.step-content {
+  flex: 1;
+}
+
+.step-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+  color: var(--text-primary);
+}
+
+/* Workflow Diagram Style */
+.workflow-box {
+  padding: 1rem 1.5rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed var(--border-color);
+  border-radius: 12px;
+  font-family: monospace;
+  font-size: 0.9rem;
+  color: var(--accent-secondary);
+  line-height: 1.8;
+  text-align: center;
+}
+
+/* Scroll adjustment */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Light Theme Fixes for info box */
+html[data-theme="light"] .info-box {
+  background: rgba(37, 99, 235, 0.05);
+  border-color: rgba(37, 99, 235, 0.1);
+}
+
+html[data-theme="light"] .info-box.important {
+  background: rgba(234, 179, 8, 0.08);
+  border-color: rgba(234, 179, 8, 0.2);
+}
+
+html[data-theme="light"] .sidebar-nav-link.active {
+  background: var(--accent-primary);
+  color: white;
 }
