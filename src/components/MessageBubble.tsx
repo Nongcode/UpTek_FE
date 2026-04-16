@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { memo } from "react";
 
 interface MessageBubbleProps {
   role: "user" | "assistant" | "system" | "manager";
@@ -26,70 +26,70 @@ function renderMarkdown(text: string): React.ReactNode[] {
   let codeContent: string[] = [];
   let blockIndex = 0;
 
-  const processInline = (line: string): React.ReactNode[] => {
-    const parts: React.ReactNode[] = [];
-    // Process bold, italic, inline code
-    let remaining = line;
-    let partIndex = 0;
-
-    // Process inline code
-    const codeRegex = /`([^`]+)`/g;
-    let lastIndex = 0;
-    let match;
-
-    while ((match = codeRegex.exec(remaining)) !== null) {
-      if (match.index > lastIndex) {
-        parts.push(
-          <span key={`text-${partIndex++}`}>
-            {processBoldItalic(remaining.slice(lastIndex, match.index))}
-          </span>
-        );
-      }
-      parts.push(
-        <code key={`code-${partIndex++}`} className="inline-code">
-          {match[1]}
-        </code>
-      );
-      lastIndex = match.index + match[0].length;
-    }
-    if (lastIndex < remaining.length) {
-      parts.push(
-        <span key={`text-${partIndex++}`}>
-          {processBoldItalic(remaining.slice(lastIndex))}
-        </span>
-      );
-    }
-    if (parts.length === 0) parts.push(processBoldItalic(line));
-    return parts;
-  };
-
-  const processBoldItalic = (text: string): React.ReactNode => {
-    // Simple bold handling
+  const processBoldItalic = (textValue: string): React.ReactNode => {
     const boldRegex = /\*\*(.+?)\*\*/g;
     const parts: React.ReactNode[] = [];
     let lastIdx = 0;
-    let m;
-    let pIdx = 0;
+    let match: RegExpExecArray | null;
+    let partIndex = 0;
 
-    while ((m = boldRegex.exec(text)) !== null) {
-      if (m.index > lastIdx) {
-        parts.push(text.slice(lastIdx, m.index));
+    while ((match = boldRegex.exec(textValue)) !== null) {
+      if (match.index > lastIdx) {
+        parts.push(textValue.slice(lastIdx, match.index));
       }
-      parts.push(<strong key={`bold-${pIdx++}`}>{m[1]}</strong>);
-      lastIdx = m.index + m[0].length;
+      parts.push(<strong key={`bold-${partIndex++}`}>{match[1]}</strong>);
+      lastIdx = match.index + match[0].length;
     }
-    if (lastIdx < text.length) {
-      parts.push(text.slice(lastIdx));
+
+    if (lastIdx < textValue.length) {
+      parts.push(textValue.slice(lastIdx));
     }
+
     return parts.length === 1 ? parts[0] : <>{parts}</>;
   };
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+  const processInline = (line: string): React.ReactNode[] => {
+    const parts: React.ReactNode[] = [];
+    const codeRegex = /`([^`]+)`/g;
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    let partIndex = 0;
 
+    while ((match = codeRegex.exec(line)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(
+          <span key={`text-${partIndex++}`}>
+            {processBoldItalic(line.slice(lastIndex, match.index))}
+          </span>,
+        );
+      }
+
+      parts.push(
+        <code key={`code-${partIndex++}`} className="inline-code">
+          {match[1]}
+        </code>,
+      );
+      lastIndex = match.index + match[0].length;
+    }
+
+    if (lastIndex < line.length) {
+      parts.push(
+        <span key={`text-${partIndex++}`}>
+          {processBoldItalic(line.slice(lastIndex))}
+        </span>,
+      );
+    }
+
+    if (parts.length === 0) {
+      parts.push(processBoldItalic(line));
+    }
+
+    return parts;
+  };
+
+  for (const line of lines) {
     if (line.startsWith("```")) {
       if (inCodeBlock) {
-        // End code block
         elements.push(
           <div key={`codeblock-${blockIndex++}`} className="code-block">
             <div className="code-block-header">
@@ -109,11 +109,11 @@ function renderMarkdown(text: string): React.ReactNode[] {
             <pre>
               <code>{codeContent.join("\n")}</code>
             </pre>
-          </div>
+          </div>,
         );
         inCodeBlock = false;
-        codeContent = [];
         codeLanguage = "";
+        codeContent = [];
       } else {
         inCodeBlock = true;
         codeLanguage = line.slice(3).trim();
@@ -126,75 +126,72 @@ function renderMarkdown(text: string): React.ReactNode[] {
       continue;
     }
 
-    // Headings
     if (line.startsWith("### ")) {
       elements.push(
         <h4 key={`h-${blockIndex++}`} className="md-heading">
           {processInline(line.slice(4))}
-        </h4>
+        </h4>,
       );
       continue;
     }
+
     if (line.startsWith("## ")) {
       elements.push(
         <h3 key={`h-${blockIndex++}`} className="md-heading">
           {processInline(line.slice(3))}
-        </h3>
+        </h3>,
       );
       continue;
     }
+
     if (line.startsWith("# ")) {
       elements.push(
         <h2 key={`h-${blockIndex++}`} className="md-heading">
           {processInline(line.slice(2))}
-        </h2>
+        </h2>,
       );
       continue;
     }
 
-    // List items
-    if (line.match(/^[-*] /)) {
+    if (/^[-*] /.test(line)) {
       elements.push(
         <div key={`li-${blockIndex++}`} className="md-list-item">
           <span className="md-bullet">•</span>
           <span>{processInline(line.slice(2))}</span>
-        </div>
+        </div>,
       );
       continue;
     }
 
-    // Numbered list
-    if (line.match(/^\d+\.\s/)) {
-      const numMatch = line.match(/^(\d+)\.\s(.*)$/);
-      if (numMatch) {
+    if (/^\d+\.\s/.test(line)) {
+      const numberedMatch = line.match(/^(\d+)\.\s(.*)$/);
+      if (numberedMatch) {
         elements.push(
           <div key={`ol-${blockIndex++}`} className="md-list-item">
-            <span className="md-number">{numMatch[1]}.</span>
-            <span>{processInline(numMatch[2])}</span>
-          </div>
+            <span className="md-number">{numberedMatch[1]}.</span>
+            <span>{processInline(numberedMatch[2])}</span>
+          </div>,
         );
         continue;
       }
     }
 
-    // Empty lines
     if (line.trim() === "") {
       elements.push(<div key={`br-${blockIndex++}`} className="md-spacer" />);
       continue;
     }
 
-    // Regular paragraph
     elements.push(
       <p key={`p-${blockIndex++}`} className="md-paragraph">
         {processInline(line)}
-      </p>
+      </p>,
     );
   }
 
   return elements;
 }
 
-export default function MessageBubble({
+function MessageBubble({
   role,
   type,
   content,
@@ -212,8 +209,8 @@ export default function MessageBubble({
               <circle cx="10" cy="10" r="3" fill="white" opacity="0.8" />
               <defs>
                 <linearGradient id="ai-grad" x1="2" y1="2" x2="18" y2="18">
-                  <stop stopColor="#818cf8" />
-                  <stop offset="1" stopColor="#c084fc" />
+                  <stop stopColor="var(--accent-primary)" />
+                  <stop offset="1" stopColor="var(--accent-secondary)" />
                 </linearGradient>
               </defs>
             </svg>
@@ -228,13 +225,28 @@ export default function MessageBubble({
       </div>
       <div className="message-content-wrapper">
         <div className="message-sender">
-          {type === "manager_note" ? "Chỉ đạo từ Quản lý" : role === "assistant" ? "Uptek-AI" : "Bạn"}
+          {type === "manager_note"
+            ? "Chỉ đạo từ Quản lý"
+            : role === "manager"
+              ? "Quản lý"
+              : role === "assistant"
+                ? "Uptek-AI"
+                : "Bạn"}
         </div>
         <div className={`message-bubble ${role} ${type === "manager_note" ? "manager-whisper" : ""}`}>
           {role === "assistant" ? (
             <div className={`markdown-body ${isStreamingMessage ? "streaming" : ""}`}>
               {renderMarkdown(content)}
-              {isStreaming && <span className="cursor-blink">▊</span>}
+              {isStreaming && (
+                <div
+                  className="typing-indicator"
+                  style={{ display: "inline-flex", marginLeft: "8px", verticalAlign: "middle" }}
+                >
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                </div>
+              )}
             </div>
           ) : (
             <div className="plain-content">{content}</div>
@@ -245,3 +257,5 @@ export default function MessageBubble({
     </div>
   );
 }
+
+export default memo(MessageBubble);

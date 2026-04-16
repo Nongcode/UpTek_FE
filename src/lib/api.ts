@@ -1,6 +1,7 @@
 import { BootstrapConfig, LoginResponse } from "./types";
 
 const GATEWAY_BASE = "/api/gateway";
+const BACKEND_BASE = "http://localhost:3001/api";
 
 export async function fetchBootstrapConfig(): Promise<BootstrapConfig> {
   const res = await fetch(`${GATEWAY_BASE}/__openclaw/control-ui-config.json`);
@@ -14,7 +15,7 @@ export async function login(
   email: string,
   password: string
 ): Promise<LoginResponse> {
-  const res = await fetch(`${GATEWAY_BASE}/__openclaw/control-ui-login`, {
+  const res = await fetch(`${BACKEND_BASE}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),

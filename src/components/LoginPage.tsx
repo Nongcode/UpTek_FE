@@ -8,7 +8,7 @@ import type { DemoLoginAccount } from "@/lib/types";
 export default function LoginPage() {
   const { login, bootstrapConfig, isLoading, error, isAuthenticated, employeeId } = useAuth();
   const router = useRouter();
-  
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -46,15 +46,11 @@ export default function LoginPage() {
   const handleQuickLogin = async (account: DemoLoginAccount) => {
     setLoginError(null);
     setIsSubmitting(true);
-    // Find the full account with password from bootstrapConfig
     const fullAccount = bootstrapConfig?.demoLogin?.accounts.find(
       (a) => a.email === account.email
     );
     if (!fullAccount) return;
     setEmail(account.email);
-    // We need the password - it's available in the config's demoLogin
-    // The bootstrap config only returns email/label/employeeId, not password
-    // So we'll pre-fill the email and let user type password
     setPassword("");
     setIsSubmitting(false);
   };
@@ -75,42 +71,7 @@ export default function LoginPage() {
       <div className="login-card">
         <div className="login-header">
           <div className="login-logo">
-            {bootstrapConfig?.assistantAvatar ? (
-              <img src={bootstrapConfig.assistantAvatar} alt="Uptek-AI Logo" width="48" height="48" style={{ borderRadius: '50%', objectFit: 'cover' }} />
-            ) : (
-              <svg
-                width="48"
-                height="48"
-                viewBox="0 0 48 48"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <circle cx="24" cy="24" r="24" fill="url(#logo-gradient)" />
-                <path
-                  d="M16 20C16 17.7909 17.7909 16 20 16H28C30.2091 16 32 17.7909 32 20V28C32 30.2091 30.2091 32 28 32H20C17.7909 32 16 30.2091 16 28V20Z"
-                  fill="rgba(255,255,255,0.2)"
-                />
-                <path
-                  d="M20 24L23 27L28 21"
-                  stroke="white"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <defs>
-                  <linearGradient
-                    id="logo-gradient"
-                    x1="0"
-                    y1="0"
-                    x2="48"
-                    y2="48"
-                  >
-                    <stop stopColor="#6366f1" />
-                    <stop offset="1" stopColor="#8b5cf6" />
-                  </linearGradient>
-                </defs>
-              </svg>
-            )}
+            <img src="/dbc2d982-780a-40a7-9588-5406dac6054d.jpg" alt="Uptek Logo" className="login-logo-img" />
           </div>
           <h1>Uptek-AI</h1>
           <p className="login-subtitle">Đăng nhập để bắt đầu trò chuyện với AI Agent</p>

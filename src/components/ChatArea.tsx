@@ -1,28 +1,49 @@
 "use client";
 
-import React, { useRef, useEffect } from "react";
+import React, { memo, useCallback, useEffect, useRef } from "react";
 import { Message } from "@/lib/types";
 import MessageBubble from "./MessageBubble";
+import StreamingMessage from "./StreamingMessage";
+import { StreamingStore } from "@/hooks/useConversations";
 
 interface ChatAreaProps {
   messages: Message[];
   isStreaming: boolean;
   streamingMessageId: string | null;
+  streamingStore: StreamingStore;
   agentId: string | null;
 }
 
-export default function ChatArea({
+function ChatArea({
   messages,
   isStreaming,
   streamingMessageId,
-  agentId
+  streamingStore,
+  agentId,
 }: ChatAreaProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
+
+  const scrollToBottomIfNeeded = useCallback(() => {
+    if (!shouldAutoScrollRef.current) {
+      return;
+    }
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, []);
+
+  const handleScroll = useCallback(() => {
+    if (!containerRef.current) {
+      return;
+    }
+
+    const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
+    shouldAutoScrollRef.current = scrollHeight - scrollTop - clientHeight < 100;
+  }, []);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isStreaming]);
+    scrollToBottomIfNeeded();
+  }, [messages, isStreaming, scrollToBottomIfNeeded]);
 
   if (messages.length === 0) {
     return (
@@ -40,16 +61,15 @@ export default function ChatArea({
               <circle cx="32" cy="32" r="6" fill="white" opacity="0.8" />
               <defs>
                 <linearGradient id="welcome-grad" x1="8" y1="8" x2="56" y2="56">
-                  <stop stopColor="#818cf8" />
-                  <stop offset="0.5" stopColor="#a78bfa" />
-                  <stop offset="1" stopColor="#c084fc" />
+                  <stop stopColor="var(--accent-primary)" />
+                  <stop offset="1" stopColor="var(--accent-secondary)" />
                 </linearGradient>
               </defs>
             </svg>
           </div>
           <h2>Xin chào! Tôi có thể giúp gì cho bạn?</h2>
           <p className="welcome-subtitle">
-            Bạn đang kết nối với agent <strong>{agentId || "Uptek-AI"}</strong>. 
+            Bạn đang kết nối với agent <strong>{agentId || "Uptek-AI"}</strong>.
             Hãy bắt đầu cuộc trò chuyện!
           </p>
           <div className="welcome-suggestions">
@@ -76,20 +96,33 @@ export default function ChatArea({
   }
 
   return (
-    <div className="chat-area" ref={containerRef}>
+    <div className="chat-area" ref={containerRef} onScroll={handleScroll}>
       <div className="chat-messages">
-        {messages.map((msg) => (
-          <MessageBubble
-            key={msg.id}
-            role={msg.role}
-            type={msg.type}
-            content={msg.content}
-            timestamp={msg.timestamp}
-            isStreaming={isStreaming}
-            isStreamingMessage={isStreaming && msg.id === streamingMessageId}
-          />
-        ))}
-        {isStreaming && !messages.find((m) => m.id === streamingMessageId) && (
+        {messages.map((message) => {
+          const isStreamingBubble = isStreaming && message.id === streamingMessageId;
+          if (isStreamingBubble) {
+            return (
+              <StreamingMessage
+                key={message.id}
+                messageId={message.id}
+                timestamp={message.timestamp}
+                streamingStore={streamingStore}
+                onContentChange={scrollToBottomIfNeeded}
+              />
+            );
+          }
+
+          return (
+            <MessageBubble
+              key={message.id}
+              role={message.role}
+              type={message.type}
+              content={message.content}
+              timestamp={message.timestamp}
+            />
+          );
+        })}
+        {isStreaming && !messages.find((message) => message.id === streamingMessageId) && (
           <div className="message-row assistant">
             <div className="message-avatar">
               <div className="avatar-ai">
@@ -98,8 +131,8 @@ export default function ChatArea({
                   <circle cx="10" cy="10" r="3" fill="white" opacity="0.8" />
                   <defs>
                     <linearGradient id="ai-grad2" x1="2" y1="2" x2="18" y2="18">
-                      <stop stopColor="#818cf8" />
-                      <stop offset="1" stopColor="#c084fc" />
+                      <stop stopColor="var(--accent-primary)" />
+                      <stop offset="1" stopColor="var(--accent-secondary)" />
                     </linearGradient>
                   </defs>
                 </svg>
@@ -120,3 +153,5 @@ export default function ChatArea({
     </div>
   );
 }
+
+export default memo(ChatArea);

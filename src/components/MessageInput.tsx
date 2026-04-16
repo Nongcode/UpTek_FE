@@ -8,6 +8,7 @@ interface MessageInputProps {
   onStopStreaming?: () => void;
   isManagerView?: boolean;
   disabled?: boolean;
+  disabledReason?: string;
 }
 
 export default function MessageInput({
@@ -16,6 +17,7 @@ export default function MessageInput({
   onStopStreaming,
   isManagerView = false,
   disabled,
+  disabledReason,
 }: MessageInputProps) {
   const [message, setMessage] = useState("");
   const [isManagerNote, setIsManagerNote] = useState(false);
@@ -61,19 +63,19 @@ export default function MessageInput({
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Nhập tin nhắn..."
+          placeholder={disabled ? (disabledReason || "Tạm thời không thể gửi tin nhắn...") : "Nhập tin nhắn..."}
           rows={1}
           disabled={isStreaming || disabled}
         />
         <div className="input-actions">
-          <button 
-            className="action-button icon-btn" 
+          <button
+            className="action-button icon-btn"
             title="Thư viện Lệnh (Business Templates)"
             onClick={() => setShowTemplates(!showTemplates)}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
-              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
             </svg>
           </button>
           {showTemplates && (
@@ -85,8 +87,8 @@ export default function MessageInput({
             }}>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', padding: '0 0.5rem 0.25rem' }}>THƯ VIỆN LỆNH</div>
               {templates.map((t, idx) => (
-                <button 
-                  key={idx} 
+                <button
+                  key={idx}
                   style={{ background: 'transparent', color: 'var(--text-primary)', border: 'none', textAlign: 'left', padding: '0.5rem', cursor: 'pointer', borderRadius: '4px' }}
                   onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
                   onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
@@ -102,47 +104,47 @@ export default function MessageInput({
             </div>
           )}
         </div>
-        
+
         {isStreaming ? (
-            <button
-              className="stop-button"
-              onClick={onStopStreaming}
-              title="Dừng phản hồi"
+          <button
+            className="stop-button"
+            onClick={onStopStreaming}
+            title="Dừng phản hồi"
+          >
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor">
+              <rect x="4" y="4" width="10" height="10" rx="1" />
+            </svg>
+          </button>
+        ) : (
+          <button
+            className="send-button"
+            onClick={handleSubmit}
+            disabled={!message.trim() || disabled}
+            title="Gửi tin nhắn (Enter)"
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 18 18"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
             >
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor">
-                <rect x="4" y="4" width="10" height="10" rx="1" />
-              </svg>
-            </button>
-          ) : (
-            <button
-              className="send-button"
-              onClick={handleSubmit}
-              disabled={!message.trim() || disabled}
-              title="Gửi tin nhắn (Enter)"
-            >
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 18 18"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M9 15V3M4 8l5-5 5 5" />
-              </svg>
-            </button>
-          )}
-        </div>
+              <path d="M9 15V3M4 8l5-5 5 5" />
+            </svg>
+          </button>
+        )}
+      </div>
       <p className="input-hint">
-        Enter để gửi · Shift+Enter xuống dòng
+        {disabled && disabledReason ? disabledReason : "Enter để gửi · Shift+Enter xuống dòng"}
       </p>
       {isManagerView && (
         <div className="manager-options" style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-          <input 
-            type="checkbox" 
-            id="manager-note" 
+          <input
+            type="checkbox"
+            id="manager-note"
             checked={isManagerNote}
             onChange={(e) => setIsManagerNote(e.target.checked)}
           />

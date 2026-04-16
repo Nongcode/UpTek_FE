@@ -21,7 +21,11 @@ function loadAuthFromStorage(): AuthState | null {
   try {
     const raw = sessionStorage.getItem(AUTH_STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw) as Partial<AuthState>;
+    if (parsed.isAuthenticated && !parsed.backendToken) {
+      return null;
+    }
+    return parsed as AuthState;
   } catch {
     return null;
   }
@@ -41,6 +45,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [auth, setAuth] = useState<AuthState>({
     isAuthenticated: false,
     token: null,
+    backendToken: null,
     accessPolicy: null,
     employeeName: null,
     employeeId: null,
@@ -69,6 +74,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const newAuth: AuthState = {
         isAuthenticated: true,
         token: result.token || null,
+        backendToken: result.backendToken || null,
         accessPolicy: result.accessPolicy || null,
         employeeName: result.accessPolicy?.employeeName || email.split("@")[0],
         employeeId: result.accessPolicy?.employeeId || email.split("@")[0],
@@ -89,6 +95,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setAuth({
       isAuthenticated: false,
       token: null,
+      backendToken: null,
       accessPolicy: null,
       employeeName: null,
       employeeId: null,

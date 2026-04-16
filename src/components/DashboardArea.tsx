@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { loadAllConversationsGlobally, Conversation } from '@/lib/storage';
 
-export default function DashboardArea() {
+export default function DashboardArea({ backendToken }: { backendToken: string | null }) {
   const [globalStats, setGlobalStats] = useState({
     totalChats: 0,
     totalMessages: 0,
@@ -13,7 +13,8 @@ export default function DashboardArea() {
     let mounted = true;
     
     async function loadData() {
-      const allConvs = await loadAllConversationsGlobally();
+      if (!backendToken) return;
+      const allConvs = await loadAllConversationsGlobally({ backendToken });
       if (!mounted) return;
       
       let msgsCount = 0;
@@ -38,7 +39,7 @@ export default function DashboardArea() {
     loadData();
     
     return () => { mounted = false; };
-  }, []);
+  }, [backendToken]);
 
   return (
     <div className="dashboard-container">

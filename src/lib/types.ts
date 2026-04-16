@@ -11,10 +11,11 @@ export interface Conversation {
   id: string;
   title: string;
   messages: Message[];
+  lane?: "user" | "automation";
   agentId: string;
   sessionKey: string;
   projectId?: string;
-  status?: "active" | "pending_approval" | "approved";
+  status?: "active" | "pending_approval" | "approved" | "cancelled" | "stopped";
   employeeId?: string;
   createdAt: number;
   updatedAt: number;
@@ -73,13 +74,15 @@ export interface BootstrapConfig {
 
 export interface LoginResponse {
   ok: true;
-  token?: string;
+  token?: string | null;
+  backendToken?: string | null;
   accessPolicy?: AccessPolicy;
 }
 
 export interface AuthState {
   isAuthenticated: boolean;
   token: string | null;
+  backendToken: string | null;
   accessPolicy: AccessPolicy | null;
   employeeName: string | null;
   employeeId: string | null;

@@ -1,7 +1,10 @@
 "use client";
 
-import React from "react";
+import React, { useMemo, useState } from "react";
 import { Conversation } from "@/lib/types";
+import SearchModal from "@/components/SearchModal";
+
+import Link from "next/link";
 
 interface SidebarProps {
   conversations: Conversation[];
@@ -28,20 +31,28 @@ export default function Sidebar({
   isCollapsed,
   onToggle,
 }: SidebarProps) {
-  const sortedConversations = [...conversations].sort(
-    (a, b) => b.updatedAt - a.updatedAt
-  );
+  const [showSearchModal, setShowSearchModal] = useState(false);
+  const getStatusLabel = (status?: Conversation["status"]) => {
+    if (status === "pending_approval") return "Chờ duyệt";
+    if (status === "approved") return "Hoàn tất";
+    if (status === "cancelled") return "Đã hủy";
+    if (status === "stopped") return "Đã dừng";
+    return "Đang chạy";
+  };
 
-  const groupConversations = () => {
+  const sortedConversations = useMemo(() => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt), [conversations]);
+
+
+
+  const groupConversations = (source: Conversation[]) => {
     const now = Date.now();
     const today: Conversation[] = [];
     const yesterday: Conversation[] = [];
     const thisWeek: Conversation[] = [];
     const older: Conversation[] = [];
-
     const dayMs = 86400000;
 
-    sortedConversations.forEach((conv) => {
+    source.forEach((conv) => {
       const age = now - conv.updatedAt;
       if (age < dayMs) today.push(conv);
       else if (age < 2 * dayMs) yesterday.push(conv);
@@ -52,7 +63,7 @@ export default function Sidebar({
     return { today, yesterday, thisWeek, older };
   };
 
-  const groups = groupConversations();
+  const groups = groupConversations(sortedConversations);
 
   const renderGroup = (label: string, items: Conversation[]) => {
     if (items.length === 0) return null;
@@ -71,6 +82,11 @@ export default function Sidebar({
               </svg>
             </div>
             <span className="conversation-title">{conv.title}</span>
+            {conv.lane === "automation" && (
+              <span className={`conversation-status-badge ${conv.status || "active"}`}>
+                {getStatusLabel(conv.status)}
+              </span>
+            )}
             <button
               className="conversation-delete"
               onClick={(e) => {
@@ -100,6 +116,17 @@ export default function Sidebar({
             </svg>
             <span>Cuộc trò chuyện mới</span>
           </button>
+
+        </div>
+
+        <div className="sidebar-search-button-wrapper" style={{ margin: "0 auto" }}>
+          <button className="menu-button" onClick={() => setShowSearchModal(true)} aria-label="Mở tìm kiếm">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="7"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <p style={{ marginLeft: "5px", fontSize: "14px" }}>Tìm kiếm đoạn chat</p>
+          </button>
         </div>
 
         <nav className="sidebar-nav">
@@ -119,10 +146,32 @@ export default function Sidebar({
         </nav>
 
         <div className="sidebar-footer">
-          <div className="user-profile">
-            <div className="user-avatar">
-              {(employeeName || "U")[0].toUpperCase()}
+          <div className="docs-nav-item">
+            <Link href="/docs" className="docs-button">
+              <div className="docs-button-content">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                  <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+                </svg>
+                <span>Tài liệu HDSD</span>
+              </div>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                <polyline points="15 3 21 3 21 9" />
+                <line x1="10" y1="14" x2="21" y2="3" />
+              </svg>
+            </Link>
+          </div>
+
+          <div className="sidebar-version-wrapper">
+            <div className="sidebar-version">
+              <span>PHIÊN BẢN <span>v2026.3.14</span></span>
+              <div className="version-dot"></div>
             </div>
+          </div>
+
+          <div className="user-profile">
+            <div className="user-avatar">{(employeeName || "U")[0].toUpperCase()}</div>
             <div className="user-info">
               <span className="user-name">{employeeName || "User"}</span>
               <span className="user-role">{employeeId || ""}</span>
@@ -134,7 +183,14 @@ export default function Sidebar({
             </button>
           </div>
         </div>
+
       </aside>
+      <SearchModal
+        isOpen={showSearchModal}
+        onClose={() => setShowSearchModal(false)}
+        conversations={sortedConversations}
+        onSelectConversation={(id) => onSelectConversation(id)}
+      />
     </>
   );
 }

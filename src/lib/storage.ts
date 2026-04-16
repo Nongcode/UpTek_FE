@@ -1,14 +1,52 @@
 import { Conversation, Message, Project } from "./types";
 
 const STORAGE_PREFIX = "openclaw_chat_";
-
 const API_BASE = "http://localhost:3001/api";
 
-export async function loadConversations(employeeId: string): Promise<Conversation[]> {
+type BackendAuth = {
+  backendToken: string;
+};
+
+function buildAuthHeaders(auth: BackendAuth): HeadersInit {
+  return {
+    Authorization: `Bearer ${auth.backendToken}`,
+  };
+}
+
+async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
+  const response = await fetch(input, init);
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => null);
+    throw new Error(errorData?.error?.message || `Request failed with status ${response.status}`);
+  }
+  return (await response.json()) as T;
+}
+
+async function requestVoid(input: RequestInfo | URL, init?: RequestInit): Promise<void> {
+  const response = await fetch(input, init);
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => null);
+    throw new Error(errorData?.error?.message || `Request failed with status ${response.status}`);
+  }
+}
+
+export async function loadConversations(
+  employeeId: string,
+  options?: { includeAutomation?: boolean },
+  auth?: BackendAuth,
+): Promise<Conversation[]> {
+  if (!auth?.backendToken) {
+    return [];
+  }
+
   try {
-    const res = await fetch(`${API_BASE}/conversations/${employeeId}`);
-    if (!res.ok) return [];
-    return await res.json() as Conversation[];
+    const includeAutomation = options?.includeAutomation ? "1" : "0";
+    return await requestJson<Conversation[]>(
+      `${API_BASE}/conversations/${employeeId}?includeAutomation=${includeAutomation}`,
+      {
+        headers: buildAuthHeaders(auth),
+      },
+    );
   } catch {
     return [];
   }
@@ -16,70 +54,64 @@ export async function loadConversations(employeeId: string): Promise<Conversatio
 
 export async function saveConversations(
   employeeId: string,
-  conversations: Conversation[]
+  conversations: Conversation[],
 ): Promise<void> {
-  // We don't save the entire array to the DB like localStorage.
-  // This function is kept for signature compatibility during transition,
-  // but we will create dedicated API calls for creation and updates.
-  // For full array replacement (e.g. from deletion), it's complex. Let's just do nothing here
-  // and handle API sync in page.tsx.
+  void employeeId;
+  void conversations;
 }
 
-export async function apiCreateConversation(conv: Conversation): Promise<void> {
-  try {
-    await fetch(`${API_BASE}/conversations`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(conv)
-    });
-  } catch (err) {
-    console.error("Lỗi khi lưu cuộc trò chuyện:", err);
-  }
+export async function apiCreateConversation(conv: Conversation, auth: BackendAuth): Promise<void> {
+  await requestVoid(`${API_BASE}/conversations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...buildAuthHeaders(auth) },
+    body: JSON.stringify(conv),
+  });
 }
 
-export async function apiUpdateConversation(id: string, updates: Partial<Conversation>): Promise<void> {
-  try {
-    await fetch(`${API_BASE}/conversations/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updates)
-    });
-  } catch (err) {
-    console.error("Lỗi khi cập nhật cuộc trò chuyện:", err);
-  }
+export async function apiUpdateConversation(
+  id: string,
+  updates: Partial<Conversation>,
+  auth: BackendAuth,
+): Promise<void> {
+  await requestVoid(`${API_BASE}/conversations/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...buildAuthHeaders(auth) },
+    body: JSON.stringify(updates),
+  });
 }
 
-export async function apiSaveMessages(messages: Message[]): Promise<void> {
-  try {
-    await fetch(`${API_BASE}/messages`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages })
-    });
-  } catch (err) {
-    console.error("Lỗi khi lưu tin nhắn:", err);
-  }
+export async function apiSaveMessages(messages: Message[], auth: BackendAuth): Promise<void> {
+  await requestVoid(`${API_BASE}/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...buildAuthHeaders(auth) },
+    body: JSON.stringify({ messages }),
+  });
 }
 
-export async function apiDeleteConversation(id: string): Promise<void> {
-  try {
-    await fetch(`${API_BASE}/conversations/${id}`, { method: "DELETE" });
-  } catch (err) {
-    console.error("Lỗi khi xóa cuộc trò chuyện:", err);
-  }
+export async function apiDeleteConversation(id: string, auth: BackendAuth): Promise<void> {
+  await requestVoid(`${API_BASE}/conversations/${id}`, {
+    method: "DELETE",
+    headers: buildAuthHeaders(auth),
+  });
 }
 
 export function createConversation(
   agentId: string,
-  projectId?: string
+  projectId?: string,
+  lane: "user" | "automation" = "user",
+  ownerId?: string,
 ): Conversation {
   const id = `conv_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-  // Format chuẩn Gateway: agent:<agentId>:<mainKey>
-  const sessionKey = `agent:${agentId}:${id}`;
+  const ownerSegment = (ownerId || "anon").replace(/[^a-zA-Z0-9_-]/g, "_");
+  const sessionKey = lane === "automation"
+    ? `automation:${agentId}:${id}`
+    : `agent:${agentId}:${ownerSegment}:${id}`;
+
   return {
     id,
-    title: "Cuộc trò chuyện mới",
+    title: lane === "automation" ? "Luồng tự động mới" : "Cuộc trò chuyện mới",
     messages: [],
+    lane,
     agentId,
     sessionKey,
     projectId,
@@ -92,7 +124,7 @@ export function createConversation(
 export function createMessage(
   role: "user" | "assistant" | "system" | "manager",
   content: string,
-  type?: "regular" | "manager_note" | "approval_request"
+  type?: "regular" | "manager_note" | "approval_request",
 ): Message {
   return {
     id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
@@ -104,38 +136,43 @@ export function createMessage(
 }
 
 export function generateConversationTitle(messages: Message[]): string {
-  const firstUserMsg = messages.find((m) => m.role === "user");
-  if (!firstUserMsg) return "Cuộc trò chuyện mới";
-  const text = firstUserMsg.content.trim();
-  if (text.length <= 40) return text;
-  return text.slice(0, 40) + "...";
+  const firstUserMessage = messages.find((message) => message.role === "user");
+  if (!firstUserMessage) {
+    return "Cuộc trò chuyện mới";
+  }
+
+  const text = firstUserMessage.content.trim();
+  if (text.length <= 40) {
+    return text;
+  }
+
+  return `${text.slice(0, 40)}...`;
 }
 
-// -------------------------------------------------------------------
-// GLOBAL CONVERSATIONS (For Dashboard)
-// -------------------------------------------------------------------
-export async function loadAllConversationsGlobally(): Promise<Conversation[]> {
+export async function loadAllConversationsGlobally(auth: BackendAuth): Promise<Conversation[]> {
   try {
-    const res = await fetch(`${API_BASE}/conversations-global`);
-    if (!res.ok) return [];
-    return await res.json() as Conversation[];
+    return await requestJson<Conversation[]>(`${API_BASE}/conversations-global`, {
+      headers: buildAuthHeaders(auth),
+    });
   } catch {
     return [];
   }
 }
 
-// -------------------------------------------------------------------
-// PROJECTS
-// -------------------------------------------------------------------
 function getProjectsStorageKey(): string {
   return `${STORAGE_PREFIX}global_projects`;
 }
 
 export function loadProjects(): Project[] {
-  if (typeof window === "undefined") return [];
+  if (typeof window === "undefined") {
+    return [];
+  }
+
   try {
     const raw = localStorage.getItem(getProjectsStorageKey());
-    if (!raw) return [];
+    if (!raw) {
+      return [];
+    }
     return JSON.parse(raw) as Project[];
   } catch {
     return [];
@@ -143,7 +180,10 @@ export function loadProjects(): Project[] {
 }
 
 export function saveProjects(projects: Project[]): void {
-  if (typeof window === "undefined") return;
+  if (typeof window === "undefined") {
+    return;
+  }
+
   localStorage.setItem(getProjectsStorageKey(), JSON.stringify(projects));
 }
 
@@ -155,10 +195,11 @@ export function createProject(name: string): Project {
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
+
   const projects = loadProjects();
   projects.push(newProject);
   saveProjects(projects);
   return newProject;
 }
-export type { Conversation, Project };
 
+export type { Conversation, Project };
