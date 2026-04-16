@@ -113,7 +113,7 @@ export default function DocsPage() {
             <div style={{ display: "inline-flex", alignItems: "center", gap: "0.75rem", background: "var(--accent-primary)", color: "white", padding: "0.2rem 0.6rem", borderRadius: "6px", width: "fit-content", fontSize: "0.75rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "1px" }}>
               Phiên bản 1.0
             </div>
-            <h1 style={{ margin: 0, lineHeight: 1.2 }}>HƯỚNG DẪN SỬ DỤNG HỆ THỐNG AGENT</h1>
+            <h1 style={{ margin: 0, lineHeight: 1.5 }}>HƯỚNG DẪN SỬ DỤNG HỆ THỐNG AGENT</h1>
             <p style={{ margin: 0, fontSize: "1.1rem" }}>Tài liệu bàn giao cho khách hàng cuối • Đối tượng: Phó phòng</p>
           </div>
         </header>
