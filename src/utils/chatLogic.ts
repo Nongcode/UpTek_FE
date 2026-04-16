@@ -26,6 +26,27 @@ export function hydrateConversationLane(conversation: Conversation): Conversatio
   };
 }
 
+export function extractAutomationWorkflowId(
+  conversation: Pick<Conversation, "id" | "sessionKey">,
+): string | null {
+  const sessionKey = String(conversation.sessionKey || "");
+  const id = String(conversation.id || "");
+
+  const sessionMatch = sessionKey.match(/^automation:[^:]+:(.+)$/i);
+  const sessionWorkflowId = sessionMatch?.[1]?.trim();
+  if (sessionWorkflowId && !sessionWorkflowId.startsWith("conv_") && !sessionWorkflowId.includes(":conv_")) {
+    return sessionWorkflowId;
+  }
+
+  const idMatch = id.match(/^auto_[^_]+_(.+)$/i);
+  const idWorkflowId = idMatch?.[1]?.trim();
+  if (idWorkflowId && !idWorkflowId.startsWith("conv_")) {
+    return idWorkflowId;
+  }
+
+  return null;
+}
+
 export function detectAutomationCancellationIntent(content: string): boolean {
   const lower = String(content || "").toLowerCase();
   return (
