@@ -41,6 +41,8 @@ export interface AccessPolicy {
   employeeName?: string;
   lockedAgentId?: string;
   lockedSessionKey?: string;
+  companyId?: string;
+  departmentId?: string;
   canViewAllSessions?: boolean;
   visibleAgentIds?: string[];
   lockAgent?: boolean;

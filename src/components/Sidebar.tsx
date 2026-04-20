@@ -17,6 +17,8 @@ interface SidebarProps {
   onLogout: () => void;
   isCollapsed: boolean;
   onToggle: () => void;
+  onOpenDashboard?: () => void;
+  canViewAllSessions?: boolean;
 }
 
 export default function Sidebar({
@@ -30,6 +32,8 @@ export default function Sidebar({
   onLogout,
   isCollapsed,
   onToggle,
+  onOpenDashboard,
+  canViewAllSessions,
 }: SidebarProps) {
   const [showSearchModal, setShowSearchModal] = useState(false);
   const getStatusLabel = (status?: Conversation["status"]) => {
@@ -147,6 +151,33 @@ export default function Sidebar({
 
         <div className="sidebar-footer">
           <div className="docs-nav-item">
+            {canViewAllSessions && (
+              <button 
+                onClick={onOpenDashboard} 
+                className="docs-button" 
+                style={{ marginBottom: "10px", width: "100%", border: "none", cursor: "pointer", textAlign: "left" }}
+              >
+                <div className="docs-button-content">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+                    <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+                    <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+                    <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+                  </svg>
+                  <span>Bảng điều khiển</span>
+                </div>
+              </button>
+            )}
+            <Link href="/gallery" className="docs-button" style={{ marginBottom: "10px" }}>
+              <div className="docs-button-content">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                  <circle cx="8.5" cy="8.5" r="1.5" />
+                  <polyline points="21 15 16 10 5 21" />
+                </svg>
+                <span>Kho ảnh sản phẩm</span>
+              </div>
+            </Link>
             <Link href="/docs" className="docs-button">
               <div className="docs-button-content">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

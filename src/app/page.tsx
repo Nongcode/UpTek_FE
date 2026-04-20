@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -151,6 +151,11 @@ export default function Home() {
     }));
   }
 
+  // Filter out admin roles for giam_doc as they shouldn't see admin chats
+  if (employeeId === "giam_doc") {
+    availableAgents = availableAgents.filter((a) => !["admin", "Admin", "main"].includes(a.lockedAgentId));
+  }
+
   const currentAgentName = availableAgents.find((agent) => agent.lockedAgentId === viewingAgentId)?.label || viewingAgentId;
   const automationCanSend = true;
   const automationDisabledReason = undefined;
@@ -190,6 +195,8 @@ export default function Home() {
         onLogout={logout}
         isCollapsed={isSidebarCollapsed}
         onToggle={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+        onOpenDashboard={() => setAppMode("dashboard")}
+        canViewAllSessions={!!accessPolicy?.canViewAllSessions}
       />
 
       <main className={`main-content ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}>
@@ -254,47 +261,36 @@ export default function Home() {
 
           <div className="header-modes-nav">
             <button
-              className={`mode-btn ${appMode === "chat" ? "active" : ""}`}
-              onClick={() => setAppMode("chat")}
-            >
-              Phòng Chat
-            </button>
-            <button
-              className={`mode-btn ${chatLane === "user" ? "active" : ""}`}
-              onClick={() => setChatLane("user")}
+              className={`mode-btn ${chatLane === "user" && appMode === "chat" ? "active" : ""}`}
+              onClick={() => { setAppMode("chat"); setChatLane("user"); }}
             >
               Chat cá nhân
             </button>
             {canUseAutomationLane && (
               <button
-                className={`mode-btn ${chatLane === "automation" ? "active" : ""}`}
-                onClick={() => setChatLane("automation")}
+                className={`mode-btn ${chatLane === "automation" && appMode === "chat" ? "active" : ""}`}
+                onClick={() => { setAppMode("chat"); setChatLane("automation"); }}
               >
                 Luồng tự động
-              </button>
-            )}
-            {accessPolicy?.canViewAllSessions && (
-              <button
-                className={`mode-btn ${appMode === "dashboard" ? "active" : ""}`}
-                onClick={() => setAppMode("dashboard")}
-              >
-                Dashboard
               </button>
             )}
           </div>
 
           <div className="header-spacer" />
-
-          {appMode === "chat" && (
-            <>
-              <ThemeToggle />
-              <button className="new-chat-icon-button" onClick={onCreateConversation} title="Tạo mới">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <path d="M12 5v14M5 12h14" />
-                </svg>
-              </button>
-            </>
-          )}
+ 
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <ThemeToggle />
+            <button 
+              className="new-chat-icon-button" 
+              onClick={onCreateConversation} 
+              title="Tạo mới"
+              style={{ visibility: appMode === "chat" ? "visible" : "hidden" }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {appMode === "chat" ? (

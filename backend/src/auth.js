@@ -148,11 +148,26 @@ function resolveAccessPolicyForEmployee(config, employeeId, employeeName) {
           canViewAllSessions: entry.canViewAllSessions,
           visibleAgentIds: entry.visibleAgentIds,
         });
+
+        const cId = "UpTek";
+        let dId = "PhongMarketing";
+        const empIdStr = normalizeText(entry.employeeId) || normalizeText(employeeId);
+        
+        if (empIdStr === "admin") {
+          dId = "All";
+        } else if (empIdStr === "giam_doc" || empIdStr === "truong_phong" || empIdStr === "pho_phong_cskh") {
+          dId = (empIdStr === "giam_doc" || empIdStr === "truong_phong") ? "BanGiamDoc" : "PhongCSKH";
+        } else if (empIdStr === "nv_consultant") {
+          dId = "PhongCSKH";
+        }
+
         return {
-          employeeId: normalizeText(entry.employeeId) || normalizeText(employeeId),
+          employeeId: empIdStr,
           employeeName: normalizeText(entry.employeeName) || normalizeText(employeeName),
           lockedAgentId,
           lockedSessionKey: normalizeSessionKey(entry.lockedSessionKey) || `agent:${lockedAgentId}:main`,
+          companyId: cId,
+          departmentId: dId,
           canViewAllSessions: visibility.canViewAllSessions,
           visibleAgentIds: visibility.visibleAgentIds,
           lockAgent: entry.lockAgent === true || entry.lockSession === true,
@@ -172,6 +187,8 @@ function resolveAccessPolicyForEmployee(config, employeeId, employeeName) {
   return {
     employeeId: normalizeText(employeeId),
     employeeName: normalizeText(employeeName),
+    companyId: normalizeText(employeeId),
+    departmentId: normalizeText(employeeId),
     lockedAgentId: fallbackLockedAgentId,
     lockedSessionKey: `agent:${fallbackLockedAgentId}:main`,
     canViewAllSessions: visibility.canViewAllSessions,
@@ -219,6 +236,8 @@ function issueBackendToken(config, accessPolicy) {
   const payload = {
     employeeId: accessPolicy.employeeId || accessPolicy.lockedAgentId || "unknown",
     employeeName: accessPolicy.employeeName || null,
+    companyId: accessPolicy.companyId || null,
+    departmentId: accessPolicy.departmentId || null,
     lockedAgentId: accessPolicy.lockedAgentId || null,
     visibleAgentIds: accessPolicy.visibleAgentIds || [],
     canViewAllSessions: accessPolicy.canViewAllSessions === true,
@@ -271,6 +290,9 @@ function canAccessEmployeeId(auth, employeeId) {
     return false;
   }
   if (auth.canViewAllSessions) {
+    if (auth.employeeId === 'giam_doc' && (target === 'admin' || target === 'main')) {
+      return false;
+    }
     return true;
   }
   if (normalizeEmployeeKey(auth.employeeId) === target) {
@@ -293,7 +315,13 @@ function canAccessConversation(auth, conversationLike) {
   if (!conversationLike) {
     return false;
   }
+  const empId = normalizeText(conversationLike.employeeId);
+  const aId = resolveConversationAgentId(conversationLike);
+
   if (auth.canViewAllSessions) {
+    if (auth.employeeId === 'giam_doc' && (empId === 'admin' || empId === 'main' || aId === 'main')) {
+      return false;
+    }
     return true;
   }
   const employeeId = normalizeText(conversationLike.employeeId);

@@ -44,10 +44,10 @@ export default function DashboardArea({ backendToken }: { backendToken: string |
   return (
     <div className="dashboard-container">
       <div className="dashboard-header">
-        <h1>Command Center Analytics</h1>
+        <h1>Phân tích Trung tâm Điều hành</h1>
         <p>Tổng quan toàn bộ hoạt động của AI Agents trong doanh nghiệp</p>
       </div>
-
+ 
       <div className="stats-grid">
         <div className="stat-card glass-panel">
           <div className="stat-icon">💬</div>
@@ -56,7 +56,7 @@ export default function DashboardArea({ backendToken }: { backendToken: string |
             <span className="stat-label">Tổng Cuộc Hội Thoại</span>
           </div>
         </div>
-
+ 
         <div className="stat-card glass-panel">
           <div className="stat-icon">📄</div>
           <div className="stat-info">
@@ -64,7 +64,7 @@ export default function DashboardArea({ backendToken }: { backendToken: string |
             <span className="stat-label">Tổng Tin Nhắn Xử Lý</span>
           </div>
         </div>
-
+ 
         <div className="stat-card glass-panel">
           <div className="stat-icon">🤖</div>
           <div className="stat-info">
@@ -73,7 +73,7 @@ export default function DashboardArea({ backendToken }: { backendToken: string |
           </div>
         </div>
       </div>
-
+ 
       <div className="dashboard-sections">
         <div className="glass-panel section-card">
           <h3>Hiệu suất theo Agent</h3>
@@ -87,7 +87,7 @@ export default function DashboardArea({ backendToken }: { backendToken: string |
                   <div className="bar-track">
                     <div className="bar-fill" style={{ width: `${percentage}%` }}></div>
                   </div>
-                  <div className="bar-value">{count} chats</div>
+                  <div className="bar-value">{count} cuộc chat</div>
                 </div>
               );
             })}
@@ -96,19 +96,36 @@ export default function DashboardArea({ backendToken }: { backendToken: string |
             )}
           </div>
         </div>
-
+ 
         <div className="glass-panel section-card">
           <h3>Quản lý Dự án</h3>
-          <p className="empty-text">Tích hợp Kanban board cho các dự án.</p>
-          <button className="dashboard-btn" style={{ padding: '0.5rem 1rem', borderRadius: '6px', cursor: 'pointer', background: 'var(--bg-hover)', color: 'white', border: '1px solid var(--border-color)' }}>Tạo Dự Án Mới</button>
+          <p className="empty-text">Tích hợp bảng Kanban cho các dự án.</p>
+          <button className="dashboard-btn" style={{ padding: '0.5rem 1rem', borderRadius: '6px', cursor: 'pointer', background: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-color)' }}>Tạo Dự Án Mới</button>
         </div>
-
+ 
         <div className="glass-panel section-card" style={{ gridColumn: '1 / -1' }}>
-          <h3>Executive Brief (Báo cáo Điểm tin)</h3>
+          <h3>Bản Tin Điều Hành (AI Tổng Hợp)</h3>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1rem' }}>
             Tổng hợp nhanh bằng AI toàn bộ các sự kiện, tiến độ dự án, và nút thắt công việc trong 24h qua rải rác ở từng agent.
           </p>
-          <button className="dashboard-btn" style={{ padding: '0.5rem 1rem', borderRadius: '6px', cursor: 'pointer', background: 'linear-gradient(90deg, var(--accent-primary), var(--accent-secondary))', color: 'white', border: 'none', fontWeight: 600 }}>Tạo Báo Cáo Điều Hành Ngay</button>
+          <button 
+            className="dashboard-btn primary" 
+            style={{ 
+              padding: '0.7rem 1.8rem', 
+              borderRadius: '12px', 
+              cursor: 'pointer', 
+              background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)', 
+              color: 'white', 
+              border: 'none', 
+              fontWeight: 700,
+              boxShadow: '0 10px 15px -3px rgba(99, 102, 241, 0.4)',
+              transition: 'all 0.3s ease'
+            }}
+            onMouseOver={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 20px 25px -5px rgba(99, 102, 241, 0.4)'; }}
+            onMouseOut={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(99, 102, 241, 0.4)'; }}
+          >
+            Tạo Báo Cáo Điều Hành Ngay
+          </button>
         </div>
       </div>
     </div>
