@@ -358,7 +358,9 @@ function buildLoginResponse(email, password) {
 function extractBearerToken(req) {
   const authHeader = String(req.get("authorization") || "");
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
-  return match?.[1]?.trim() || "";
+  if (match?.[1]?.trim()) return match[1].trim();
+  // Fallback cho EventSource (không hỗ trợ custom headers)
+  return String(req.query?.token || "").trim();
 }
 
 function requireBackendAuth(req, res, next) {

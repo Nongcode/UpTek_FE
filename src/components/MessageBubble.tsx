@@ -7,8 +7,61 @@ interface MessageBubbleProps {
   type?: "regular" | "manager_note" | "approval_request";
   content: string;
   timestamp: number;
+  backendToken?: string | null;
   isStreaming?: boolean;
   isStreamingMessage?: boolean;
+}
+
+const BACKEND_BASE = "http://localhost:3001";
+
+type MediaAttachment = {
+  path: string;
+  kind: "image" | "video";
+};
+
+function classifyMediaAttachment(filePath: string): MediaAttachment["kind"] | null {
+  if (/\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(filePath)) {
+    return "image";
+  }
+  if (/\.(mp4|webm|mov)$/i.test(filePath)) {
+    return "video";
+  }
+  return null;
+}
+
+function extractMediaAttachments(text: string): { cleanedText: string; attachments: MediaAttachment[] } {
+  const attachments: MediaAttachment[] = [];
+  const cleanedLines: string[] = [];
+
+  for (const line of String(text || "").split("\n")) {
+    const mediaMatch = line.match(/^MEDIA:\s*["']?(.+?)["']?\s*$/i);
+    if (!mediaMatch) {
+      cleanedLines.push(line);
+      continue;
+    }
+
+    const filePath = mediaMatch[1].trim();
+    const kind = classifyMediaAttachment(filePath);
+    if (!kind) {
+      continue;
+    }
+
+    attachments.push({ path: filePath, kind });
+  }
+
+  return {
+    cleanedText: cleanedLines.join("\n").replace(/\n{3,}/g, "\n\n").trim(),
+    attachments,
+  };
+}
+
+function buildMediaPreviewUrl(filePath: string, backendToken?: string | null): string {
+  const url = new URL(`${BACKEND_BASE}/api/media-preview`);
+  url.searchParams.set("path", filePath);
+  if (backendToken) {
+    url.searchParams.set("token", backendToken);
+  }
+  return url.toString();
 }
 
 function formatTime(ts: number): string {
@@ -196,9 +249,12 @@ function MessageBubble({
   type,
   content,
   timestamp,
+  backendToken,
   isStreaming,
   isStreamingMessage,
 }: MessageBubbleProps) {
+  const { cleanedText, attachments } = extractMediaAttachments(content);
+
   return (
     <div className={`message-row ${role}`}>
       <div className="message-avatar">
@@ -236,7 +292,34 @@ function MessageBubble({
         <div className={`message-bubble ${role} ${type === "manager_note" ? "manager-whisper" : ""}`}>
           {role === "assistant" ? (
             <div className={`markdown-body ${isStreamingMessage ? "streaming" : ""}`}>
-              {renderMarkdown(content)}
+              {attachments.length > 0 && (
+                <div style={{ display: "grid", gap: "12px", marginBottom: cleanedText ? "12px" : 0 }}>
+                  {attachments.map((attachment, index) => {
+                    const previewUrl = buildMediaPreviewUrl(attachment.path, backendToken);
+                    if (attachment.kind === "video") {
+                      return (
+                        <video
+                          key={`${attachment.path}-${index}`}
+                          src={previewUrl}
+                          controls
+                          style={{ width: "100%", maxWidth: "360px", borderRadius: "12px", display: "block" }}
+                        />
+                      );
+                    }
+
+                    return (
+                      <img
+                        key={`${attachment.path}-${index}`}
+                        src={previewUrl}
+                        alt="Media preview"
+                        loading="lazy"
+                        style={{ width: "100%", maxWidth: "180px", borderRadius: "12px", display: "block" }}
+                      />
+                    );
+                  })}
+                </div>
+              )}
+              {cleanedText ? renderMarkdown(cleanedText) : null}
               {isStreaming && (
                 <div
                   className="typing-indicator"

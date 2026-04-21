@@ -60,11 +60,21 @@ export async function saveConversations(
   void conversations;
 }
 
-export async function apiCreateConversation(conv: Conversation, auth: BackendAuth): Promise<void> {
-  await requestVoid(`${API_BASE}/conversations`, {
+export async function apiCreateConversation(
+  params: {
+    agentId: string;
+    lane?: "user" | "automation";
+    title?: string;
+    employeeId?: string;
+    workflowId?: string;
+  },
+  auth: BackendAuth,
+): Promise<Conversation> {
+  // BE sinh id + sessionKey, trả full Conversation object
+  return requestJson<Conversation>(`${API_BASE}/conversations`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...buildAuthHeaders(auth) },
-    body: JSON.stringify(conv),
+    body: JSON.stringify(params),
   });
 }
 
@@ -93,32 +103,6 @@ export async function apiDeleteConversation(id: string, auth: BackendAuth): Prom
     method: "DELETE",
     headers: buildAuthHeaders(auth),
   });
-}
-
-export function createConversation(
-  agentId: string,
-  projectId?: string,
-  lane: "user" | "automation" = "user",
-  ownerId?: string,
-): Conversation {
-  const id = `conv_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-  const ownerSegment = (ownerId || "anon").replace(/[^a-zA-Z0-9_-]/g, "_");
-  const sessionKey = lane === "automation"
-    ? `automation:${agentId}:${id}`
-    : `agent:${agentId}:${ownerSegment}:${id}`;
-
-  return {
-    id,
-    title: lane === "automation" ? "Luồng tự động mới" : "Cuộc trò chuyện mới",
-    messages: [],
-    lane,
-    agentId,
-    sessionKey,
-    projectId,
-    status: "active",
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  };
 }
 
 export function createMessage(

@@ -42,6 +42,7 @@ export default function Home() {
 
   const {
     filteredConversations,
+    workflowGroups,
     activeConversation,
     activeId,
     isStreaming,
@@ -186,6 +187,7 @@ export default function Home() {
     <div className="app-container">
       <Sidebar
         conversations={filteredConversations}
+        workflowGroups={workflowGroups}
         activeConversationId={activeId}
         onSelectConversation={onSelectConversation}
         onNewConversation={onCreateConversation}
@@ -310,6 +312,7 @@ export default function Home() {
               streamingMessageId={streamingMessageId}
               streamingStore={streamingStore}
               agentId={currentAgentName}
+              backendToken={backendToken}
             />
 
             <div className="input-container-wrapper">

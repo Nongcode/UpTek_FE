@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
@@ -10,7 +10,6 @@ import {
 } from "@/lib/types";
 import {
   loadConversations,
-  createConversation,
   createMessage,
   generateConversationTitle,
   apiCreateConversation,
@@ -26,6 +25,7 @@ import {
   hydrateConversationLane,
   normalizeAutomationStatus,
 } from "@/utils/chatLogic";
+import { useSSE } from "@/hooks/useSSE";
 
 export interface StreamingStore {
   getSnapshot: (messageId: string) => string;
@@ -47,18 +47,19 @@ interface SendMessageType {
   type?: "manager_note";
 }
 
-type SessionBoxConversation = Conversation & {
+export type SessionBoxConversation = Conversation & {
   memberConversationIds: string[];
+  memberConversations: Conversation[];
 };
 
-function sortMessages(messages: Message[]): Message[] {
-  return [...messages].sort((left, right) => {
-    if (left.timestamp !== right.timestamp) {
-      return left.timestamp - right.timestamp;
-    }
-    return left.id.localeCompare(right.id);
-  });
-}
+export type WorkflowConversationGroup = {
+  workflowId: string;
+  title: string;
+  updatedAt: number;
+  rootConversationId: string | null;
+  memberConversationIds: string[];
+  memberConversations: Conversation[];
+};
 
 function isTechnicalAutomationTitle(title: string | undefined): boolean {
   const normalized = String(title || "").trim();
@@ -71,93 +72,55 @@ function isTechnicalAutomationTitle(title: string | undefined): boolean {
   );
 }
 
-function resolveSessionBoxTitle(
-  group: Conversation[],
-  mergedMessages: Message[],
-  representative: Conversation,
-  latestConversation: Conversation,
-): string {
-  const preferredConversationTitle = group.find(
-    (conversation) => !isTechnicalAutomationTitle(conversation.title),
-  )?.title;
-  if (preferredConversationTitle) {
-    return preferredConversationTitle;
-  }
-
-  const firstHumanMessage = mergedMessages.find(
-    (message) => message.role === "user" || message.role === "manager",
-  );
-  if (firstHumanMessage) {
-    return generateConversationTitle([firstHumanMessage]);
-  }
-
-  return representative.title || latestConversation.title || "Luồng tự động";
+function resolveConversationRole(conversation: Conversation): "root" | "sub_agent" {
+  return conversation.role || (conversation.parentConversationId ? "sub_agent" : "root");
 }
 
-function buildSessionBoxConversations(
+function buildWorkflowConversationGroups(
   conversations: Conversation[],
   viewingAgentId: string,
-): SessionBoxConversation[] {
+): WorkflowConversationGroup[] {
   const grouped = new Map<string, Conversation[]>();
-  const singles: SessionBoxConversation[] = [];
 
   for (const conversation of conversations) {
-    const workflowId = extractAutomationWorkflowId(conversation);
+    const workflowId = conversation.workflowId || extractAutomationWorkflowId(conversation);
     if (!workflowId) {
-      singles.push({
-        ...conversation,
-        memberConversationIds: [conversation.id],
-      });
       continue;
     }
 
-    const existingGroup = grouped.get(workflowId) || [];
-    existingGroup.push(conversation);
-    grouped.set(workflowId, existingGroup);
+    const list = grouped.get(workflowId) || [];
+    list.push(conversation);
+    grouped.set(workflowId, list);
   }
 
-  const sessionBoxes = [...grouped.values()].map((group) => {
-    const representative =
-      group.find(
-        (conversation) =>
-          conversation.agentId === viewingAgentId || conversation.employeeId === viewingAgentId,
-      ) || group.reduce((latest, conversation) =>
-        conversation.updatedAt > latest.updatedAt ? conversation : latest,
+  return [...grouped.entries()]
+    .map(([workflowId, group]) => {
+      const latestConversation = group.reduce((latest, current) =>
+        current.updatedAt > latest.updatedAt ? current : latest,
       );
+      const rootConversation =
+        group.find((conversation) => resolveConversationRole(conversation) === "root")
+        || group.find((conversation) => conversation.agentId === viewingAgentId)
+        || null;
+      const preferredConversationTitle = group.find(
+        (conversation) => !isTechnicalAutomationTitle(conversation.title),
+      )?.title;
+      const title =
+        rootConversation?.title
+        || preferredConversationTitle
+        || latestConversation.title
+        || "Luá»“ng tá»± Ä‘á»™ng";
 
-    const dedupedMessages = new Map<string, Message>();
-    for (const conversation of group) {
-      for (const message of conversation.messages) {
-        const existing = dedupedMessages.get(message.id);
-        if (!existing || existing.timestamp <= message.timestamp) {
-          dedupedMessages.set(message.id, {
-            ...message,
-            conversationId: representative.id,
-          });
-        }
-      }
-    }
-
-    const mergedMessages = sortMessages([...dedupedMessages.values()]);
-    const updatedAt = Math.max(...group.map((conversation) => conversation.updatedAt));
-    const createdAt = Math.min(...group.map((conversation) => conversation.createdAt));
-    const latestConversation = group.reduce((latest, conversation) =>
-      conversation.updatedAt > latest.updatedAt ? conversation : latest,
-    );
-    const title = resolveSessionBoxTitle(group, mergedMessages, representative, latestConversation);
-
-    return {
-      ...representative,
-      title,
-      messages: mergedMessages,
-      status: latestConversation.status || representative.status,
-      updatedAt,
-      createdAt,
-      memberConversationIds: group.map((conversation) => conversation.id),
-    };
-  });
-
-  return [...sessionBoxes, ...singles].sort((left, right) => right.updatedAt - left.updatedAt);
+      return {
+        workflowId,
+        title,
+        updatedAt: latestConversation.updatedAt,
+        rootConversationId: rootConversation?.id || null,
+        memberConversationIds: group.map((conversation) => conversation.id),
+        memberConversations: group,
+      };
+    })
+    .sort((left, right) => right.updatedAt - left.updatedAt);
 }
 
 function isConversationCancellation(
@@ -193,22 +156,75 @@ export function useConversations({
   const streamContentRef = useRef<Map<string, string>>(new Map());
   const streamListenersRef = useRef<Map<string, Set<() => void>>>(new Map());
   const streamingStoreRef = useRef<StreamingStore | null>(null);
+  const progressTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>[]>>(new Map());
+  const pendingRefreshRef = useRef(false);
 
   const isViewingSubordinate = viewingAgentId !== "" && viewingAgentId !== employeeId;
   const targetLoadId = isViewingSubordinate ? viewingAgentId : employeeId;
   const shouldFetch = Boolean(targetLoadId && backendToken);
-  const refreshInterval = enablePolling && streamingConvIds.size === 0 ? 10000 : 0;
+
+  const mutateRef = useRef<(() => void) | null>(null);
+
+  useSSE({
+    backendToken,
+    enabled: enablePolling,
+    onEvent: (eventName, _data) => {
+      const shouldRefreshDuringStreaming =
+        chatLane === "automation"
+        && (eventName === "workflow.updated" || eventName === "message.created" || eventName === "conversation.created");
+
+      if (streamingMapRef.current.size === 0 || shouldRefreshDuringStreaming) {
+        pendingRefreshRef.current = false;
+        mutateRef.current?.();
+        return;
+      }
+
+      pendingRefreshRef.current = true;
+    },
+  });
+
+  const refreshInterval = enablePolling
+    ? (chatLane === "automation" ? 10000 : (streamingConvIds.size === 0 ? 30000 : 0))
+    : 0;
+
+  useEffect(() => {
+    if (streamingConvIds.size !== 0 || !pendingRefreshRef.current) {
+      return;
+    }
+
+    pendingRefreshRef.current = false;
+    mutateRef.current?.();
+  }, [streamingConvIds.size]);
 
   const matchesLaneConversation = (conversation: Conversation) => {
     if ((conversation.lane || "user") !== chatLane) {
       return false;
     }
 
-    if (chatLane === "automation") {
-      return true;
+    if (chatLane === "user") {
+      return conversation.agentId === viewingAgentId;
     }
 
-    return conversation.agentId === viewingAgentId;
+    const role = resolveConversationRole(conversation);
+    const isOwnAutomationScope = viewingAgentId === employeeId;
+
+    if (isOwnAutomationScope) {
+      return conversation.agentId === viewingAgentId && role === "root";
+    }
+
+    return conversation.agentId === viewingAgentId && role === "sub_agent";
+  };
+
+  const matchesWorkflowGroupConversation = (conversation: Conversation) => {
+    if ((conversation.lane || "user") !== "automation") {
+      return false;
+    }
+
+    if (viewingAgentId === employeeId) {
+      return conversation.employeeId === employeeId;
+    }
+
+    return conversation.agentId === viewingAgentId || conversation.employeeId === viewingAgentId;
   };
 
   if (!streamingStoreRef.current) {
@@ -258,32 +274,31 @@ export function useConversations({
     },
   );
 
+  mutateRef.current = () => { void mutate(); };
+
   const filteredSourceConversations = useMemo(
     () => conversations.filter(matchesLaneConversation),
-    [chatLane, conversations, viewingAgentId],
+    [chatLane, conversations, employeeId, viewingAgentId],
   );
 
   const filteredConversations = useMemo(() => {
-    if (chatLane !== "automation") {
-      return filteredSourceConversations.map((conversation) => ({
+    return [...filteredSourceConversations]
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .map((conversation) => ({
         ...conversation,
         memberConversationIds: [conversation.id],
+        memberConversations: [conversation],
       })) as SessionBoxConversation[];
+  }, [filteredSourceConversations]);
+
+  const workflowGroups = useMemo(() => {
+    if (chatLane !== "automation") {
+      return [] as WorkflowConversationGroup[];
     }
 
-    return buildSessionBoxConversations(filteredSourceConversations, viewingAgentId);
-  }, [chatLane, filteredSourceConversations, viewingAgentId]);
-
-  const conversationMemberIds = useMemo(
-    () =>
-      new Map(
-        filteredConversations.map((conversation) => [
-          conversation.id,
-          conversation.memberConversationIds,
-        ]),
-      ),
-    [filteredConversations],
-  );
+    const automationConversations = conversations.filter(matchesWorkflowGroupConversation);
+    return buildWorkflowConversationGroups(automationConversations, viewingAgentId);
+  }, [chatLane, conversations, employeeId, viewingAgentId]);
 
   useEffect(() => {
     conversationsRef.current = conversations;
@@ -341,6 +356,11 @@ export function useConversations({
   };
 
   const cleanupStreaming = (conversationId: string, messageId: string) => {
+    const timers = progressTimersRef.current.get(messageId);
+    if (timers) {
+      timers.forEach(clearTimeout);
+      progressTimersRef.current.delete(messageId);
+    }
     streamingMapRef.current.delete(conversationId);
     clearStreamContent(messageId);
     setStreamingConvIds((previous) => {
@@ -404,7 +424,7 @@ export function useConversations({
     try {
       await apiUpdateConversation(conversationId, { status, updatedAt }, { backendToken });
     } catch {
-      toast.error("KhÃ´ng thá»ƒ Ä‘á»“ng bá»™ tráº¡ng thÃ¡i há»™i thoáº¡i.");
+      toast.error("KhÃƒÂ´ng thÃ¡Â»Æ’ Ã„â€˜Ã¡Â»â€œng bÃ¡Â»â„¢ trÃ¡ÂºÂ¡ng thÃƒÂ¡i hÃ¡Â»â„¢i thoÃ¡ÂºÂ¡i.");
     }
   };
 
@@ -478,41 +498,27 @@ export function useConversations({
         ],
       );
     } catch {
-      toast.error("KhÃ´ng thá»ƒ lÆ°u pháº£n há»“i cá»§a AI. Vui lÃ²ng táº£i láº¡i há»™i thoáº¡i.");
+      toast.error("KhÃƒÂ´ng thÃ¡Â»Æ’ lÃ†Â°u phÃ¡ÂºÂ£n hÃ¡Â»â€œi cÃ¡Â»Â§a AI. Vui lÃƒÂ²ng tÃ¡ÂºÂ£i lÃ¡ÂºÂ¡i hÃ¡Â»â„¢i thoÃ¡ÂºÂ¡i.");
     }
   };
 
   const handleNewConversation = async () => {
-    if (!viewingAgentId) {
+    if (!viewingAgentId || !backendToken) {
       return;
     }
 
-    const previousConversations = conversationsRef.current;
-    const previousActiveId = activeIdRef.current;
     const laneForNewConversation: ChatLane =
       canUseAutomationLane && chatLane === "automation" ? "automation" : "user";
 
-    const nextConversation = createConversation(
-      viewingAgentId,
-      undefined,
-      laneForNewConversation,
-      targetLoadId || undefined,
-    );
-    nextConversation.employeeId = targetLoadId || undefined;
-
-    await applyConversations([nextConversation, ...previousConversations]);
-    setActiveId(nextConversation.id);
-
-    if (!backendToken) {
-      return;
-    }
-
     try {
-      await apiCreateConversation(nextConversation, { backendToken });
+      const newConv = await apiCreateConversation(
+        { agentId: viewingAgentId, lane: laneForNewConversation, employeeId: targetLoadId || undefined },
+        { backendToken },
+      );
+      await applyConversations([newConv, ...conversationsRef.current]);
+      setActiveId(newConv.id);
     } catch {
-      await applyConversations(previousConversations);
-      setActiveId(previousActiveId);
-      toast.error("Lá»—i káº¿t ná»‘i, khÃ´ng thá»ƒ táº¡o há»™i thoáº¡i má»›i.");
+      toast.error("LÃ¡Â»â€”i kÃ¡ÂºÂ¿t nÃ¡Â»â€˜i, khÃƒÂ´ng thÃ¡Â»Æ’ tÃ¡ÂºÂ¡o hÃ¡Â»â„¢i thoÃ¡ÂºÂ¡i mÃ¡Â»â€ºi.");
     }
   };
 
@@ -523,17 +529,14 @@ export function useConversations({
   const handleDeleteConversation = async (conversationId: string) => {
     const previousConversations = conversationsRef.current;
     const previousActiveId = activeIdRef.current;
-    const memberIds = conversationMemberIds.get(conversationId) || [conversationId];
     const nextConversations = previousConversations.filter(
-      (conversation) => !memberIds.includes(conversation.id),
+      (conversation) => conversation.id !== conversationId,
     );
 
     await applyConversations(nextConversations);
 
     if (previousActiveId === conversationId) {
-      const remaining = nextConversations.filter(
-        matchesLaneConversation,
-      );
+      const remaining = nextConversations.filter(matchesLaneConversation);
       setActiveId(remaining[0]?.id || null);
     }
 
@@ -542,11 +545,11 @@ export function useConversations({
     }
 
     try {
-      await Promise.all(memberIds.map((memberId) => apiDeleteConversation(memberId, { backendToken })));
+      await apiDeleteConversation(conversationId, { backendToken });
     } catch {
       await applyConversations(previousConversations);
       setActiveId(previousActiveId);
-      toast.error("Lá»—i káº¿t ná»‘i, khÃ´ng thá»ƒ xÃ³a há»™i thoáº¡i.");
+      toast.error("LÃ¡Â»â€”i kÃ¡ÂºÂ¿t nÃ¡Â»â€˜i, khÃƒÂ´ng thÃ¡Â»Æ’ xÃƒÂ³a hÃ¡Â»â„¢i thoÃ¡ÂºÂ¡i.");
     }
   };
 
@@ -564,13 +567,16 @@ export function useConversations({
       canUseAutomationLane && chatLane === "automation" ? "automation" : "user";
 
     if (!conversation) {
-      conversation = createConversation(
-        viewingAgentId,
-        undefined,
-        laneForConversation,
-        targetLoadId || undefined,
-      );
-      conversation.employeeId = targetLoadId || undefined;
+      if (!backendToken) return;
+      try {
+        conversation = await apiCreateConversation(
+          { agentId: viewingAgentId, lane: laneForConversation, employeeId: targetLoadId || undefined },
+          { backendToken },
+        );
+      } catch {
+        toast.error("Lá»—i káº¿t ná»‘i, khÃ´ng thá»ƒ táº¡o há»™i thoáº¡i má»›i.");
+        return;
+      }
     }
 
     const conversationId = conversation.id;
@@ -613,16 +619,12 @@ export function useConversations({
 
     try {
       if (backendToken) {
-        if (!conversationExists) {
-          await apiCreateConversation({ ...conversation, messages: [] }, { backendToken });
-        }
-
         await persistConversationUpdate(conversationId, { title: nextTitle, status: nextStatus, updatedAt }, [newMessage]);
       }
     } catch {
       await applyConversations(snapshotBeforeSend);
       setActiveId(previousActiveId);
-      toast.error("Lá»—i káº¿t ná»‘i, khÃ´ng thá»ƒ gá»­i tin nháº¯n.");
+      toast.error("LÃ¡Â»â€”i kÃ¡ÂºÂ¿t nÃ¡Â»â€˜i, khÃƒÂ´ng thÃ¡Â»Æ’ gÃ¡Â»Â­i tin nhÃ¡ÂºÂ¯n.");
       return;
     }
 
@@ -660,6 +662,20 @@ export function useConversations({
 
     let aiContent = "";
 
+    const PROGRESS_STAGES = [
+      { delay: 3000, text: "Dang xu ly..." },
+      { delay: 30000, text: "Dang xu ly, tac vu co the mat vai phut..." },
+      { delay: 120000, text: "Workflow dang chay (thuong mat 5-10 phut)..." },
+    ];
+    progressTimersRef.current.set(
+      aiMessageId,
+      PROGRESS_STAGES.map(({ delay, text }) =>
+        setTimeout(() => {
+          if (!aiContent) setStreamContent(aiMessageId, text);
+        }, delay),
+      ),
+    );
+
     try {
       await streamChatCompletion({
         token,
@@ -671,6 +687,14 @@ export function useConversations({
         })),
         signal: controller.signal,
         onDelta: (text) => {
+          if (!aiContent) {
+            const timers = progressTimersRef.current.get(aiMessageId);
+            if (timers) {
+              timers.forEach(clearTimeout);
+              progressTimersRef.current.delete(aiMessageId);
+            }
+            setStreamContent(aiMessageId, "");
+          }
           aiContent += text;
           setStreamContent(aiMessageId, aiContent);
         },
@@ -681,13 +705,13 @@ export function useConversations({
           const errorContent = aiContent
             ? `${aiContent}\n\n**[Loi: ${error.message}]**`
             : `**[Loi: ${error.message}]**`;
-          toast.error("Káº¿t ná»‘i tá»›i AI bá»‹ giÃ¡n Ä‘oáº¡n. Vui lÃ²ng thá»­ láº¡i.");
+          toast.error("KÃ¡ÂºÂ¿t nÃ¡Â»â€˜i tÃ¡Â»â€ºi AI bÃ¡Â»â€¹ giÃƒÂ¡n Ã„â€˜oÃ¡ÂºÂ¡n. Vui lÃƒÂ²ng thÃ¡Â»Â­ lÃ¡ÂºÂ¡i.");
           void commitAssistantMessage(conversationId, aiMessageId, errorContent, "pending_approval");
         },
       });
     } catch {
       cleanupStreaming(conversationId, aiMessageId);
-      toast.error("KhÃ´ng thá»ƒ báº¯t Ä‘áº§u phiÃªn streaming.");
+      toast.error("KhÃƒÂ´ng thÃ¡Â»Æ’ bÃ¡ÂºÂ¯t Ã„â€˜Ã¡ÂºÂ§u phiÃƒÂªn streaming.");
     }
   };
 
@@ -706,6 +730,7 @@ export function useConversations({
   return {
     conversations,
     filteredConversations,
+    workflowGroups,
     activeConversation,
     activeId,
     isStreaming,
@@ -720,4 +745,3 @@ export function useConversations({
     handleStopStreaming,
   };
 }
-

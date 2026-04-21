@@ -12,6 +12,7 @@ interface ChatAreaProps {
   streamingMessageId: string | null;
   streamingStore: StreamingStore;
   agentId: string | null;
+  backendToken?: string | null;
 }
 
 function ChatArea({
@@ -20,6 +21,7 @@ function ChatArea({
   streamingMessageId,
   streamingStore,
   agentId,
+  backendToken,
 }: ChatAreaProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -119,6 +121,7 @@ function ChatArea({
               type={message.type}
               content={message.content}
               timestamp={message.timestamp}
+              backendToken={backendToken}
             />
           );
         })}

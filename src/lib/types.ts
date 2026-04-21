@@ -11,10 +11,13 @@ export interface Conversation {
   id: string;
   title: string;
   messages: Message[];
-  lane?: "user" | "automation";
+  lane: "user" | "automation";
   agentId: string;
   sessionKey: string;
   projectId?: string;
+  workflowId?: string;
+  role?: "root" | "sub_agent";
+  parentConversationId?: string;
   status?: "active" | "pending_approval" | "approved" | "cancelled" | "stopped";
   employeeId?: string;
   createdAt: number;
