@@ -26,6 +26,9 @@ export default function GalleryPage() {
   const [dateFilter, setDateFilter] = useState<{ start: string; end: string }>({ start: "", end: "" });
   const [modelFilter, setModelFilter] = useState("");
   const [uploadModel, setUploadModel] = useState("");
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -86,19 +89,46 @@ export default function GalleryPage() {
   };
 
   const handleUploadClick = () => {
-    if (!uploadModel.trim()) {
-      toast.error("Vui lòng nhập Model Sản Phẩm trước khi chọn ảnh!");
-      return;
-    }
-    fileInputRef.current?.click();
+    setUploadModel("");
+    setSelectedFiles([]);
+    setPreviewUrls([]);
+    setShowUploadModal(true);
   };
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
 
-    if (!file.type.startsWith("image/")) {
-      toast.error("Vui lòng chọn file hình ảnh!");
+    const validFiles = files.filter(file => file.type.startsWith("image/"));
+    if (validFiles.length < files.length) {
+      toast.error("Một số file không phải hình ảnh và đã bị loại bỏ.");
+    }
+
+    if (validFiles.length === 0) return;
+
+    setSelectedFiles(prev => [...prev, ...validFiles]);
+    
+    validFiles.forEach(file => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setPreviewUrls(prev => [...prev, reader.result as string]);
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const removeFile = (index: number) => {
+    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+    setPreviewUrls(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const confirmUpload = async () => {
+    if (selectedFiles.length === 0) {
+      toast.error("Vui lòng chọn ít nhất một ảnh!");
+      return;
+    }
+    if (!uploadModel.trim()) {
+      toast.error("Vui lòng nhập Model Sản Phẩm!");
       return;
     }
 
@@ -106,17 +136,18 @@ export default function GalleryPage() {
       setUploading(true);
       const formData = new FormData();
       
-      // Map company based on active tab
       let targetCompany = "UpTek";
       if (activeTab === "Công ty A") targetCompany = "CongTyA";
       else if (activeTab === "Công ty B") targetCompany = "CongTyB";
       else if (activeTab === "Công ty C") targetCompany = "CongTyC";
 
-      // Append company and department context
       formData.append("companyId", targetCompany);
       formData.append("departmentId", accessPolicy?.departmentId || "default_dept");
       formData.append("productModel", uploadModel.trim());
-      formData.append("image", file);
+      
+      selectedFiles.forEach(file => {
+        formData.append("images", file);
+      });
 
       const res = await fetch("http://localhost:3001/api/gallery/upload", {
         method: "POST",
@@ -126,17 +157,15 @@ export default function GalleryPage() {
         body: formData,
       });
 
-      if (!res.ok) {
-        throw new Error("Tải lên thất bại");
-      }
+      if (!res.ok) throw new Error("Tải lên thất bại");
 
-      toast.success("Đã thêm ảnh thành công!");
+      toast.success(`Đã thêm ${selectedFiles.length} ảnh thành công!`);
+      setShowUploadModal(false);
       fetchImages();
     } catch (error: any) {
       toast.error(error.message || "Lỗi upload");
     } finally {
       setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
@@ -300,19 +329,12 @@ export default function GalleryPage() {
 
         <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
           <input
-            type="text"
-            placeholder="Nhập Mã/Model Sản phẩm..."
-            className="filter-input"
-            value={uploadModel}
-            onChange={(e) => setUploadModel(e.target.value)}
-            style={{ width: "220px" }}
-          />
-          <input
             type="file"
             ref={fileInputRef}
             style={{ display: "none" }}
             accept="image/*"
-            onChange={handleUpload}
+            multiple
+            onChange={handleFileChange}
           />
           <button
             className="upload-btn"
@@ -480,6 +502,124 @@ export default function GalleryPage() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+      {showUploadModal && (
+        <div className="search-modal-overlay" onMouseDown={() => setShowUploadModal(false)}>
+          <div className="search-modal" onMouseDown={(e) => e.stopPropagation()} style={{ maxWidth: "500px" }}>
+            <div className="search-modal-header" style={{ justifyContent: "space-between" }}>
+              <h3 style={{ margin: 0, color: "var(--text-primary)" }}>Tải lên ảnh mới</h3>
+              <button className="search-modal-close" onClick={() => setShowUploadModal(false)}>✕</button>
+            </div>
+            <div className="search-modal-body" style={{ padding: "1.5rem", display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+              <div className="form-group">
+                <label style={{ color: "var(--text-secondary)", fontSize: "0.85rem", fontWeight: 600, marginBottom: "0.5rem", display: "block" }}>
+                  Mã / Model Sản phẩm
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ví dụ: IPHONE-15-PRO"
+                  className="filter-input"
+                  value={uploadModel}
+                  onChange={(e) => setUploadModel(e.target.value)}
+                  style={{ width: "100%" }}
+                  autoFocus
+                />
+              </div>
+
+              <div className="form-group">
+                <label style={{ color: "var(--text-secondary)", fontSize: "0.85rem", fontWeight: 600, marginBottom: "0.5rem", display: "block" }}>
+                  Hình ảnh sản phẩm ({selectedFiles.length})
+                </label>
+                <div 
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{ 
+                    border: "2px dashed var(--border-color)", 
+                    borderRadius: "12px", 
+                    padding: "0.75rem", 
+                    textAlign: "center", 
+                    cursor: "pointer",
+                    transition: "all 0.2s",
+                    marginBottom: previewUrls.length > 0 ? "1rem" : 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "0.75rem"
+                  }}
+                  onMouseOver={(e) => e.currentTarget.style.borderColor = "var(--accent-primary)"}
+                  onMouseOut={(e) => e.currentTarget.style.borderColor = "var(--border-color)"}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                  <p style={{ margin: 0, fontSize: "0.8rem", color: "var(--text-secondary)" }}>Nhấn để thêm ảnh hoặc kéo thả</p>
+                </div>
+
+                {previewUrls.length > 0 && (
+                  <div style={{ 
+                    display: "grid", 
+                    gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", 
+                    gap: "12px",
+                    maxHeight: "400px",
+                    overflowY: "auto",
+                    padding: "4px"
+                  }}>
+                    {previewUrls.map((url, index) => (
+                      <div key={index} style={{ position: "relative", borderRadius: "8px", overflow: "hidden", border: "1px solid var(--border-color)", height: "130px" }}>
+                        <img src={url} alt={`Preview ${index}`} style={{ width: "100%", height: "100%", objectFit: "cover", background: "#f8fafc" }} />
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); removeFile(index); }}
+                          style={{ 
+                            position: "absolute", 
+                            top: "4px", 
+                            right: "4px", 
+                            background: "rgba(0,0,0,0.6)", 
+                            color: "white", 
+                            border: "none", 
+                            borderRadius: "50%", 
+                            width: "18px", 
+                            height: "18px", 
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: "10px"
+                          }}
+                        >✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: "flex", gap: "1rem", marginTop: "0.5rem" }}>
+                <button 
+                  className="upload-btn" 
+                  style={{ flex: 1, justifyContent: "center" }}
+                  onClick={confirmUpload}
+                  disabled={uploading || selectedFiles.length === 0 || !uploadModel.trim()}
+                >
+                  {uploading ? "Đang tải lên..." : `Xác nhận Tải lên (${selectedFiles.length})`}
+                </button>
+                <button 
+                  onClick={() => setShowUploadModal(false)}
+                  style={{ 
+                    padding: "0.6rem 1.2rem", 
+                    borderRadius: "8px", 
+                    border: "1px solid var(--border-color)", 
+                    background: "transparent", 
+                    color: "var(--text-primary)", 
+                    cursor: "pointer",
+                    fontWeight: 600
+                  }}
+                >
+                  Hủy
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -151,9 +151,9 @@ app.get('/api/gallery', requireBackendAuth, async (req, res) => {
   }
 });
 
-app.post('/api/gallery/upload', requireBackendAuth, upload.single('image'), async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: 'No image uploaded' });
+app.post('/api/gallery/upload', requireBackendAuth, upload.array('images', 20), async (req, res) => {
+  if (!req.files || req.files.length === 0) {
+    return res.status(400).json({ error: 'No images uploaded' });
   }
   
   const { productModel } = req.body;
@@ -165,29 +165,41 @@ app.post('/api/gallery/upload', requireBackendAuth, upload.single('image'), asyn
   let companyId = auth.companyId || 'default_company';
   let departmentId = auth.departmentId || 'default_dept';
 
-  // Validate and apply overrides from request body if authorized
   const canOverride = auth.employeeId === 'admin' || auth.employeeId === 'Admin' || auth.employeeId === 'main' || auth.employeeId === 'giam_doc';
   if (canOverride) {
     if (req.body.companyId) companyId = req.body.companyId;
     if (req.body.departmentId) departmentId = req.body.departmentId;
   }
 
-  const url = `/storage/images/${companyId}/${departmentId}/${req.file.filename}`;
-  const id = `img_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  const source = 'User';
   const uploaderId = auth.employeeId || 'unknown';
   const createdAt = Date.now();
-  const prefix = null; // User upload doesn't have prefix naturally, or it can be derived if needed, wait, prompt says only agent needs prefix.
+  const source = 'User';
+  const prefix = null;
 
+  const client = await pool.connect();
   try {
-    await pool.query(
-      `INSERT INTO "Images" ("id", "url", "companyId", "departmentId", "source", "uploaderId", "createdAt", "productModel", "prefix")
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [id, url, companyId, departmentId, source, uploaderId, createdAt, productModel, prefix]
-    );
-    return res.json({ success: true, url, id });
+    await client.query('BEGIN');
+    const uploadedImages = [];
+
+    for (const file of req.files) {
+      const url = `/storage/images/${companyId}/${departmentId}/${file.filename}`;
+      const id = `img_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      await client.query(
+        `INSERT INTO "Images" ("id", "url", "companyId", "departmentId", "source", "uploaderId", "createdAt", "productModel", "prefix")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [id, url, companyId, departmentId, source, uploaderId, createdAt, productModel, prefix]
+      );
+      uploadedImages.push({ id, url });
+    }
+
+    await client.query('COMMIT');
+    return res.json({ success: true, count: uploadedImages.length, images: uploadedImages });
   } catch (err) {
+    await client.query('ROLLBACK');
     return res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
