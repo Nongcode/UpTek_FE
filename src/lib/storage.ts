@@ -7,6 +7,16 @@ type BackendAuth = {
   backendToken: string;
 };
 
+export class BackendRequestError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "BackendRequestError";
+    this.status = status;
+  }
+}
+
 function buildAuthHeaders(auth: BackendAuth): HeadersInit {
   return {
     Authorization: `Bearer ${auth.backendToken}`,
@@ -17,7 +27,10 @@ async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Pro
   const response = await fetch(input, init);
   if (!response.ok) {
     const errorData = await response.json().catch(() => null);
-    throw new Error(errorData?.error?.message || `Request failed with status ${response.status}`);
+    throw new BackendRequestError(
+      errorData?.error?.message || `Request failed with status ${response.status}`,
+      response.status,
+    );
   }
   return (await response.json()) as T;
 }
@@ -26,7 +39,10 @@ async function requestVoid(input: RequestInfo | URL, init?: RequestInit): Promis
   const response = await fetch(input, init);
   if (!response.ok) {
     const errorData = await response.json().catch(() => null);
-    throw new Error(errorData?.error?.message || `Request failed with status ${response.status}`);
+    throw new BackendRequestError(
+      errorData?.error?.message || `Request failed with status ${response.status}`,
+      response.status,
+    );
   }
 }
 
@@ -36,20 +52,16 @@ export async function loadConversations(
   auth?: BackendAuth,
 ): Promise<Conversation[]> {
   if (!auth?.backendToken) {
-    return [];
+    throw new Error("Missing backend token");
   }
 
-  try {
-    const includeAutomation = options?.includeAutomation ? "1" : "0";
-    return await requestJson<Conversation[]>(
-      `${API_BASE}/conversations/${employeeId}?includeAutomation=${includeAutomation}`,
-      {
-        headers: buildAuthHeaders(auth),
-      },
-    );
-  } catch {
-    return [];
-  }
+  const includeAutomation = options?.includeAutomation ? "1" : "0";
+  return requestJson<Conversation[]>(
+    `${API_BASE}/conversations/${employeeId}?includeAutomation=${includeAutomation}`,
+    {
+      headers: buildAuthHeaders(auth),
+    },
+  );
 }
 
 export async function saveConversations(
@@ -134,13 +146,9 @@ export function generateConversationTitle(messages: Message[]): string {
 }
 
 export async function loadAllConversationsGlobally(auth: BackendAuth): Promise<Conversation[]> {
-  try {
-    return await requestJson<Conversation[]>(`${API_BASE}/conversations-global`, {
-      headers: buildAuthHeaders(auth),
-    });
-  } catch {
-    return [];
-  }
+  return requestJson<Conversation[]>(`${API_BASE}/conversations-global`, {
+    headers: buildAuthHeaders(auth),
+  });
 }
 
 function getProjectsStorageKey(): string {

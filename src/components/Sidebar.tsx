@@ -21,6 +21,7 @@ interface SidebarProps {
   onToggle: () => void;
   onOpenDashboard?: () => void;
   canViewAllSessions?: boolean;
+  createInFlight?: boolean;
 }
 
 export default function Sidebar({
@@ -37,6 +38,7 @@ export default function Sidebar({
   onToggle,
   onOpenDashboard,
   canViewAllSessions,
+  createInFlight = false,
 }: SidebarProps) {
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [expandedWorkflows, setExpandedWorkflows] = useState<Set<string>>(new Set());
@@ -224,7 +226,7 @@ export default function Sidebar({
       <div className={`sidebar-overlay ${!isCollapsed ? "visible" : ""}`} onClick={onToggle} />
       <aside className={`sidebar ${isCollapsed ? "collapsed" : ""}`}>
         <div className="sidebar-header">
-          <button className="new-chat-button full-width" onClick={onNewConversation}>
+          <button className="new-chat-button full-width" onClick={onNewConversation} disabled={createInFlight}>
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
               <path d="M9 3v12M3 9h12" />
             </svg>

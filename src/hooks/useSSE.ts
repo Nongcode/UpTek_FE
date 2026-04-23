@@ -1,15 +1,19 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const API_BASE = "http://localhost:3001/api";
 
 export type SSEEventName =
   | "workflow.created"
   | "workflow.updated"
+  | "workflow.progress"
   | "conversation.created"
-  | "message.created"
-  | "conversation.updated";
+  | "conversation.updated"
+  | "conversation.deleted"
+  | "message.created";
+
+export type SSEConnectionStatus = "connected" | "reconnecting" | "disconnected";
 
 type SSEHandler = (data: unknown) => void;
 
@@ -19,59 +23,72 @@ interface UseSSEOptions {
   onEvent: (eventName: SSEEventName, data: unknown) => void;
 }
 
-export function useSSE({ backendToken, enabled, onEvent }: UseSSEOptions) {
+export function useSSE({ backendToken, enabled, onEvent }: UseSSEOptions): SSEConnectionStatus {
   const esRef = useRef<EventSource | null>(null);
   const onEventRef = useRef(onEvent);
+  const [status, setStatus] = useState<SSEConnectionStatus>("disconnected");
   onEventRef.current = onEvent;
 
   useEffect(() => {
     if (!enabled || !backendToken) {
+      setStatus("disconnected");
       return;
     }
+    const token = backendToken;
 
     let retryTimeout: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;
 
     function connect() {
-      if (stopped) return;
+      if (stopped) {
+        return;
+      }
 
       const url = new URL(`${API_BASE}/events`);
-      // EventSource không hỗ trợ custom headers, dùng query param để truyền token
-      url.searchParams.set("token", backendToken as string);
+      url.searchParams.set("token", token);
 
-      const es = new EventSource(url.toString());
-      esRef.current = es;
+      const eventSource = new EventSource(url.toString());
+      esRef.current = eventSource;
+      setStatus("reconnecting");
 
-      const EVENTS: SSEEventName[] = [
+      const eventNames: SSEEventName[] = [
         "workflow.created",
         "workflow.updated",
+        "workflow.progress",
         "conversation.created",
-        "message.created",
         "conversation.updated",
+        "conversation.deleted",
+        "message.created",
       ];
 
-      const handlers: Array<{ name: string; fn: SSEHandler }> = EVENTS.map((name) => {
-        const fn: SSEHandler = (e) => {
+      const handlers: Array<{ name: SSEEventName; fn: SSEHandler }> = eventNames.map((name) => {
+        const fn: SSEHandler = (event) => {
           try {
-            const data = JSON.parse((e as MessageEvent).data);
+            const data = JSON.parse((event as MessageEvent).data);
             onEventRef.current(name, data);
           } catch {
-            // ignore malformed event
+            // Ignore malformed SSE payloads.
           }
         };
-        es.addEventListener(name, fn as EventListener);
+        eventSource.addEventListener(name, fn as EventListener);
         return { name, fn };
       });
 
-      es.onerror = () => {
-        es.close();
+      eventSource.onopen = () => {
+        setStatus("connected");
+      };
+
+      eventSource.onerror = () => {
+        eventSource.close();
         esRef.current = null;
         for (const { name, fn } of handlers) {
-          es.removeEventListener(name, fn as EventListener);
+          eventSource.removeEventListener(name, fn as EventListener);
         }
-        // Reconnect sau 5s
         if (!stopped) {
+          setStatus("reconnecting");
           retryTimeout = setTimeout(connect, 5000);
+        } else {
+          setStatus("disconnected");
         }
       };
     }
@@ -80,9 +97,14 @@ export function useSSE({ backendToken, enabled, onEvent }: UseSSEOptions) {
 
     return () => {
       stopped = true;
-      if (retryTimeout) clearTimeout(retryTimeout);
+      if (retryTimeout) {
+        clearTimeout(retryTimeout);
+      }
       esRef.current?.close();
       esRef.current = null;
+      setStatus("disconnected");
     };
   }, [backendToken, enabled]);
+
+  return status;
 }

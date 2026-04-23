@@ -1,10 +1,12 @@
 "use client";
 
-import React, { memo, useCallback, useEffect, useRef } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Message } from "@/lib/types";
 import MessageBubble from "./MessageBubble";
 import StreamingMessage from "./StreamingMessage";
 import { StreamingStore } from "@/hooks/useConversations";
+import { StreamState, type WorkflowProgressState } from "@/hooks/useConversations.helpers";
+import { SSEConnectionStatus } from "@/hooks/useSSE";
 
 interface ChatAreaProps {
   messages: Message[];
@@ -13,6 +15,22 @@ interface ChatAreaProps {
   streamingStore: StreamingStore;
   agentId: string | null;
   backendToken?: string | null;
+  streamStatusLabel?: string | null;
+  streamState?: StreamState | null;
+  workflowProgress?: WorkflowProgressState | null;
+  transientError?: string | null;
+  onDismissTransientError?: () => void;
+  sseStatus?: SSEConnectionStatus;
+}
+
+function formatElapsed(startedAt: number | null | undefined): string | null {
+  if (!startedAt) {
+    return null;
+  }
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  const minutes = String(Math.floor(elapsedSeconds / 60)).padStart(2, "0");
+  const seconds = String(elapsedSeconds % 60).padStart(2, "0");
+  return `${minutes}:${seconds}`;
 }
 
 function ChatArea({
@@ -22,76 +40,80 @@ function ChatArea({
   streamingStore,
   agentId,
   backendToken,
+  streamStatusLabel,
+  streamState,
+  workflowProgress,
+  transientError,
+  onDismissTransientError,
+  sseStatus = "disconnected",
 }: ChatAreaProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
+  const [hasUnreadBelow, setHasUnreadBelow] = useState(false);
+  const [heartbeatTick, setHeartbeatTick] = useState(0);
+  const hasActiveStreamState = Boolean(
+    streamState && !["completed", "aborted", "transport_error", "backend_sync_error"].includes(streamState.phase),
+  );
+
+  useEffect(() => {
+    if (!hasActiveStreamState && !streamStatusLabel) {
+      return;
+    }
+    const timer = setInterval(() => {
+      setHeartbeatTick((previous) => previous + 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [hasActiveStreamState, streamStatusLabel]);
 
   const scrollToBottomIfNeeded = useCallback(() => {
     if (!shouldAutoScrollRef.current) {
+      setHasUnreadBelow(true);
       return;
     }
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    setHasUnreadBelow(false);
   }, []);
 
   const handleScroll = useCallback(() => {
     if (!containerRef.current) {
       return;
     }
-
     const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
     shouldAutoScrollRef.current = scrollHeight - scrollTop - clientHeight < 100;
+    if (shouldAutoScrollRef.current) {
+      setHasUnreadBelow(false);
+    }
   }, []);
 
   useEffect(() => {
     scrollToBottomIfNeeded();
   }, [messages, isStreaming, scrollToBottomIfNeeded]);
 
+  const progressSummary = useMemo(() => {
+    if (!streamStatusLabel) {
+      return null;
+    }
+    const elapsed = formatElapsed(streamState?.startedAt || null);
+    const parts = [streamStatusLabel, elapsed].filter(Boolean);
+    return parts.join(" · ");
+  }, [heartbeatTick, streamState?.startedAt, streamStatusLabel]);
+
+  const realtimeLabel =
+    sseStatus === "connected"
+      ? null
+      : sseStatus === "reconnecting"
+        ? "Dang ket noi lai realtime..."
+        : "Realtime dang ngat ket noi.";
+
   if (messages.length === 0) {
     return (
       <div className="chat-area">
         <div className="chat-welcome">
-          <div className="welcome-icon">
-            <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
-              <circle cx="32" cy="32" r="30" fill="url(#welcome-grad)" opacity="0.15" />
-              <circle cx="32" cy="32" r="20" fill="url(#welcome-grad)" opacity="0.2" />
-              <path
-                d="M32 16L16 24v16l16 8 16-8V24l-16-8z"
-                fill="url(#welcome-grad)"
-                opacity="0.6"
-              />
-              <circle cx="32" cy="32" r="6" fill="white" opacity="0.8" />
-              <defs>
-                <linearGradient id="welcome-grad" x1="8" y1="8" x2="56" y2="56">
-                  <stop stopColor="var(--accent-primary)" />
-                  <stop offset="1" stopColor="var(--accent-secondary)" />
-                </linearGradient>
-              </defs>
-            </svg>
-          </div>
-          <h2>Xin chào! Tôi có thể giúp gì cho bạn?</h2>
+          <h2>Xin chao</h2>
           <p className="welcome-subtitle">
-            Bạn đang kết nối với agent <strong>{agentId || "Uptek-AI"}</strong>.
-            Hãy bắt đầu cuộc trò chuyện!
+            Ban dang ket noi voi agent <strong>{agentId || "Uptek-AI"}</strong>.
           </p>
-          <div className="welcome-suggestions">
-            <div className="suggestion-card">
-              <span className="suggestion-icon">💡</span>
-              <span>Lên kế hoạch công việc hôm nay</span>
-            </div>
-            <div className="suggestion-card">
-              <span className="suggestion-icon">📝</span>
-              <span>Viết nội dung cho chiến dịch mới</span>
-            </div>
-            <div className="suggestion-card">
-              <span className="suggestion-icon">📊</span>
-              <span>Phân tích báo cáo hiệu suất</span>
-            </div>
-            <div className="suggestion-card">
-              <span className="suggestion-icon">🎨</span>
-              <span>Thiết kế hình ảnh cho social media</span>
-            </div>
-          </div>
         </div>
       </div>
     );
@@ -99,6 +121,74 @@ function ChatArea({
 
   return (
     <div className="chat-area" ref={containerRef} onScroll={handleScroll}>
+      {(progressSummary || realtimeLabel || transientError) && (
+        <div
+          style={{
+            position: "sticky",
+            top: 0,
+            zIndex: 2,
+            display: "grid",
+            gap: "8px",
+            padding: "12px 16px 0",
+            background: "linear-gradient(180deg, var(--bg-primary) 0%, rgba(0,0,0,0) 100%)",
+          }}
+        >
+          {progressSummary && (
+            <div
+              style={{
+                borderRadius: "999px",
+                padding: "8px 12px",
+                background: "rgba(56, 189, 248, 0.08)",
+                border: "1px solid rgba(56, 189, 248, 0.18)",
+                color: "var(--text-primary)",
+                fontSize: "0.85rem",
+              }}
+            >
+              {progressSummary}
+            </div>
+          )}
+          {realtimeLabel && (
+            <div
+              style={{
+                borderRadius: "12px",
+                padding: "8px 12px",
+                background: "rgba(245, 158, 11, 0.10)",
+                border: "1px solid rgba(245, 158, 11, 0.22)",
+                fontSize: "0.82rem",
+              }}
+            >
+              {realtimeLabel}
+            </div>
+          )}
+          {transientError && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "12px",
+                borderRadius: "12px",
+                padding: "10px 12px",
+                background: "rgba(248, 113, 113, 0.10)",
+                border: "1px solid rgba(248, 113, 113, 0.22)",
+                fontSize: "0.82rem",
+              }}
+            >
+              <span>{transientError}</span>
+              {onDismissTransientError && (
+                <button
+                  type="button"
+                  onClick={onDismissTransientError}
+                  style={{ background: "transparent", border: "none", cursor: "pointer", color: "inherit" }}
+                >
+                  Dong
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="chat-messages">
         {messages.map((message) => {
           const isStreamingBubble = isStreaming && message.id === streamingMessageId;
@@ -125,34 +215,32 @@ function ChatArea({
             />
           );
         })}
-        {isStreaming && !messages.find((message) => message.id === streamingMessageId) && (
-          <div className="message-row assistant">
-            <div className="message-avatar">
-              <div className="avatar-ai">
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                  <path d="M10 2L2 7v6l8 5 8-5V7l-8-5z" fill="url(#ai-grad2)" opacity="0.9" />
-                  <circle cx="10" cy="10" r="3" fill="white" opacity="0.8" />
-                  <defs>
-                    <linearGradient id="ai-grad2" x1="2" y1="2" x2="18" y2="18">
-                      <stop stopColor="var(--accent-primary)" />
-                      <stop offset="1" stopColor="var(--accent-secondary)" />
-                    </linearGradient>
-                  </defs>
-                </svg>
-              </div>
-            </div>
-            <div className="message-content-wrapper">
-              <div className="message-sender">Uptek-AI</div>
-              <div className="typing-indicator">
-                <span className="typing-dot" />
-                <span className="typing-dot" />
-                <span className="typing-dot" />
-              </div>
-            </div>
-          </div>
-        )}
         <div ref={bottomRef} />
       </div>
+
+      {hasUnreadBelow && (
+        <button
+          type="button"
+          onClick={() => {
+            shouldAutoScrollRef.current = true;
+            bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+            setHasUnreadBelow(false);
+          }}
+          style={{
+            position: "sticky",
+            bottom: "20px",
+            marginLeft: "auto",
+            marginRight: "20px",
+            borderRadius: "999px",
+            border: "1px solid rgba(59, 130, 246, 0.25)",
+            background: "rgba(59, 130, 246, 0.10)",
+            padding: "10px 14px",
+            cursor: "pointer",
+          }}
+        >
+          Co phan hoi moi ↓
+        </button>
+      )}
     </div>
   );
 }

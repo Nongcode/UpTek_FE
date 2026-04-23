@@ -36,8 +36,7 @@ export default function Home() {
 
   const canUseAutomationLane = canAccessAutomationLane(employeeId, accessPolicy);
   const isViewingSubordinate = viewingAgentId !== "" && viewingAgentId !== employeeId;
-  const shouldPollConversations =
-    appMode === "chat" && (((chatLane === "automation") && canUseAutomationLane) || isViewingSubordinate);
+  const enableConversationRealtime = appMode === "chat";
   const adminDashboardUrl = process.env.NEXT_PUBLIC_ADMIN_DASHBOARD_URL;
 
   const {
@@ -53,6 +52,13 @@ export default function Home() {
     handleDeleteConversation,
     handleSendMessage,
     handleStopStreaming,
+    activeStatusLabel,
+    activeStreamState,
+    activeWorkflowProgress,
+    createInFlight,
+    transientError,
+    clearTransientError,
+    sseStatus,
   } = useConversations({
     token,
     backendToken,
@@ -61,7 +67,7 @@ export default function Home() {
     viewingAgentId,
     chatLane,
     canUseAutomationLane,
-    enablePolling: shouldPollConversations,
+    enablePolling: enableConversationRealtime,
   });
 
   useEffect(() => {
@@ -199,6 +205,7 @@ export default function Home() {
         onToggle={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
         onOpenDashboard={() => setAppMode("dashboard")}
         canViewAllSessions={!!accessPolicy?.canViewAllSessions}
+        createInFlight={createInFlight}
       />
 
       <main className={`main-content ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}>
@@ -285,6 +292,7 @@ export default function Home() {
             <button 
               className="new-chat-icon-button" 
               onClick={onCreateConversation} 
+              disabled={createInFlight}
               title="Tạo mới"
               style={{ visibility: appMode === "chat" ? "visible" : "hidden" }}
             >
@@ -313,6 +321,12 @@ export default function Home() {
               streamingStore={streamingStore}
               agentId={currentAgentName}
               backendToken={backendToken}
+              streamStatusLabel={activeStatusLabel}
+              streamState={activeStreamState}
+              workflowProgress={activeWorkflowProgress}
+              transientError={transientError}
+              onDismissTransientError={clearTransientError}
+              sseStatus={sseStatus}
             />
 
             <div className="input-container-wrapper">
@@ -323,6 +337,7 @@ export default function Home() {
                 isManagerView={isViewingSubordinate}
                 disabled={!automationCanSend}
                 disabledReason={automationDisabledReason}
+                statusLabel={activeStatusLabel}
               />
             </div>
           </>
