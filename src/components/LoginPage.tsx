@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import type { DemoLoginAccount } from "@/lib/types";
+import { getAdminDashboardUrl } from "@/lib/runtimeUrls";
 
 export default function LoginPage() {
   const { login, bootstrapConfig, isLoading, error, isAuthenticated, employeeId } = useAuth();
@@ -17,7 +18,7 @@ export default function LoginPage() {
   useEffect(() => {
     if (isAuthenticated) {
       if (employeeId === "admin" || employeeId === "Admin" || employeeId === "main") {
-        window.location.href = "http://localhost:18789/";
+        window.location.href = getAdminDashboardUrl();
       } else {
         router.push("/");
       }

@@ -10,6 +10,7 @@ import ThemeToggle from "@/components/ThemeToggle";
 import { useAuth } from "@/context/AuthContext";
 import { useConversations } from "@/hooks/useConversations";
 import { canAccessAutomationLane, ChatLane } from "@/utils/chatLogic";
+import { getAdminDashboardUrl } from "@/lib/runtimeUrls";
 
 type AppMode = "chat" | "dashboard";
 
@@ -37,7 +38,7 @@ export default function Home() {
   const canUseAutomationLane = canAccessAutomationLane(employeeId, accessPolicy);
   const isViewingSubordinate = viewingAgentId !== "" && viewingAgentId !== employeeId;
   const enableConversationRealtime = appMode === "chat";
-  const adminDashboardUrl = process.env.NEXT_PUBLIC_ADMIN_DASHBOARD_URL;
+  const adminDashboardUrl = getAdminDashboardUrl();
 
   const {
     filteredConversations,

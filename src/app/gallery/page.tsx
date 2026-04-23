@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/context/AuthContext";
 import toast from "react-hot-toast";
+import { buildBackendApiUrl, buildStorageUrl } from "@/lib/runtimeUrls";
 
 interface ImageItem {
   id: string;
@@ -47,7 +48,7 @@ export default function GalleryPage() {
   const fetchImages = async () => {
     try {
       setFetching(true);
-      const res = await fetch("http://localhost:3001/api/gallery", {
+      const res = await fetch(buildBackendApiUrl("gallery"), {
         headers: {
           Authorization: `Bearer ${backendToken}`,
         },
@@ -118,7 +119,7 @@ export default function GalleryPage() {
       formData.append("productModel", uploadModel.trim());
       formData.append("image", file);
 
-      const res = await fetch("http://localhost:3001/api/gallery/upload", {
+      const res = await fetch(buildBackendApiUrl("gallery/upload"), {
         method: "POST",
         headers: {
           Authorization: `Bearer ${backendToken}`,
@@ -437,8 +438,8 @@ export default function GalleryPage() {
       ) : (
         <div className="gallery-grid">
           {filteredImages.map((img) => (
-            <div key={img.id} className="gallery-item" onClick={() => window.open(`http://localhost:3001${img.url}`, '_blank')}>
-              <img src={`http://localhost:3001${img.url}`} alt="Gallery item" loading="lazy" />
+            <div key={img.id} className="gallery-item" onClick={() => window.open(buildStorageUrl(img.url), '_blank')}>
+              <img src={buildStorageUrl(img.url)} alt="Gallery item" loading="lazy" />
               <div className="gallery-overlay">
                 <span style={{ 
                   background: img.source === "AI" ? "var(--accent-secondary)" : (document.documentElement.getAttribute('data-theme') === 'light' ? "#dbeafe" : "var(--accent-primary)"), 

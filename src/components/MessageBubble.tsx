@@ -1,6 +1,7 @@
 "use client";
 
 import React, { memo, useMemo, useState } from "react";
+import { buildBackendMediaPreviewUrl } from "@/lib/runtimeUrls";
 
 interface MessageBubbleProps {
   role: "user" | "assistant" | "system" | "manager";
@@ -11,8 +12,6 @@ interface MessageBubbleProps {
   isStreaming?: boolean;
   isStreamingMessage?: boolean;
 }
-
-const BACKEND_BASE = "http://localhost:3001";
 
 type MediaAttachment = {
   path: string;
@@ -54,12 +53,7 @@ function extractMediaAttachments(text: string): { cleanedText: string; attachmen
 }
 
 function buildMediaPreviewUrl(filePath: string, backendToken?: string | null): string {
-  const url = new URL(`${BACKEND_BASE}/api/media-preview`);
-  url.searchParams.set("path", filePath);
-  if (backendToken) {
-    url.searchParams.set("token", backendToken);
-  }
-  return url.toString();
+  return buildBackendMediaPreviewUrl(filePath, backendToken);
 }
 
 function formatTime(timestamp: number): string {

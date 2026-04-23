@@ -1,10 +1,8 @@
 import { BootstrapConfig, LoginResponse } from "./types";
-
-const GATEWAY_BASE = "/api/gateway";
-const BACKEND_BASE = "http://localhost:3001/api";
+import { buildBackendApiUrl, buildGatewayProxyUrl } from "./runtimeUrls";
 
 export async function fetchBootstrapConfig(): Promise<BootstrapConfig> {
-  const res = await fetch(`${GATEWAY_BASE}/__openclaw/control-ui-config.json`);
+  const res = await fetch(buildGatewayProxyUrl("__openclaw/control-ui-config.json"));
   if (!res.ok) {
     throw new Error(`Failed to fetch bootstrap config: ${res.status}`);
   }
@@ -15,7 +13,7 @@ export async function login(
   email: string,
   password: string
 ): Promise<LoginResponse> {
-  const res = await fetch(`${BACKEND_BASE}/auth/login`, {
+  const res = await fetch(buildBackendApiUrl("auth/login"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
@@ -66,7 +64,7 @@ export async function streamChatCompletion(
   };
 
   try {
-    const res = await fetch(`${GATEWAY_BASE}/v1/chat/completions`, {
+    const res = await fetch(buildGatewayProxyUrl("v1/chat/completions"), {
       method: "POST",
       headers,
       body: JSON.stringify(body),

@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-
-const API_BASE = "http://localhost:3001/api";
+import { buildBackendApiUrl } from "@/lib/runtimeUrls";
 
 export type SSEEventName =
   | "workflow.created"
@@ -44,7 +43,7 @@ export function useSSE({ backendToken, enabled, onEvent }: UseSSEOptions): SSECo
         return;
       }
 
-      const url = new URL(`${API_BASE}/events`);
+      const url = new URL(buildBackendApiUrl("events"), window.location.origin);
       url.searchParams.set("token", token);
 
       const eventSource = new EventSource(url.toString());

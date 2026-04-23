@@ -1,7 +1,7 @@
 import { Conversation, Message, Project } from "./types";
+import { buildBackendApiUrl } from "./runtimeUrls";
 
 const STORAGE_PREFIX = "openclaw_chat_";
-const API_BASE = "http://localhost:3001/api";
 
 type BackendAuth = {
   backendToken: string;
@@ -57,7 +57,7 @@ export async function loadConversations(
 
   const includeAutomation = options?.includeAutomation ? "1" : "0";
   return requestJson<Conversation[]>(
-    `${API_BASE}/conversations/${employeeId}?includeAutomation=${includeAutomation}`,
+    `${buildBackendApiUrl(`conversations/${employeeId}`)}?includeAutomation=${includeAutomation}`,
     {
       headers: buildAuthHeaders(auth),
     },
@@ -82,8 +82,7 @@ export async function apiCreateConversation(
   },
   auth: BackendAuth,
 ): Promise<Conversation> {
-  // BE sinh id + sessionKey, trả full Conversation object
-  return requestJson<Conversation>(`${API_BASE}/conversations`, {
+  return requestJson<Conversation>(buildBackendApiUrl("conversations"), {
     method: "POST",
     headers: { "Content-Type": "application/json", ...buildAuthHeaders(auth) },
     body: JSON.stringify(params),
@@ -95,7 +94,7 @@ export async function apiUpdateConversation(
   updates: Partial<Conversation>,
   auth: BackendAuth,
 ): Promise<void> {
-  await requestVoid(`${API_BASE}/conversations/${id}`, {
+  await requestVoid(buildBackendApiUrl(`conversations/${id}`), {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...buildAuthHeaders(auth) },
     body: JSON.stringify(updates),
@@ -103,7 +102,7 @@ export async function apiUpdateConversation(
 }
 
 export async function apiSaveMessages(messages: Message[], auth: BackendAuth): Promise<void> {
-  await requestVoid(`${API_BASE}/messages`, {
+  await requestVoid(buildBackendApiUrl("messages"), {
     method: "POST",
     headers: { "Content-Type": "application/json", ...buildAuthHeaders(auth) },
     body: JSON.stringify({ messages }),
@@ -111,7 +110,7 @@ export async function apiSaveMessages(messages: Message[], auth: BackendAuth): P
 }
 
 export async function apiDeleteConversation(id: string, auth: BackendAuth): Promise<void> {
-  await requestVoid(`${API_BASE}/conversations/${id}`, {
+  await requestVoid(buildBackendApiUrl(`conversations/${id}`), {
     method: "DELETE",
     headers: buildAuthHeaders(auth),
   });
@@ -146,7 +145,7 @@ export function generateConversationTitle(messages: Message[]): string {
 }
 
 export async function loadAllConversationsGlobally(auth: BackendAuth): Promise<Conversation[]> {
-  return requestJson<Conversation[]>(`${API_BASE}/conversations-global`, {
+  return requestJson<Conversation[]>(buildBackendApiUrl("conversations-global"), {
     headers: buildAuthHeaders(auth),
   });
 }
