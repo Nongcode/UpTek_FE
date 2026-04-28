@@ -1,7 +1,7 @@
 import { BootstrapConfig, LoginResponse } from "./types";
 
 const GATEWAY_BASE = "/api/gateway";
-const BACKEND_BASE = "http://localhost:3001/api";
+export const BACKEND_BASE = process.env.NEXT_PUBLIC_BACKEND_API_BASE || "/api/backend";
 
 export async function fetchBootstrapConfig(): Promise<BootstrapConfig> {
   const res = await fetch(`${GATEWAY_BASE}/__openclaw/control-ui-config.json`);

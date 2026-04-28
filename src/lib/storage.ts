@@ -1,7 +1,8 @@
 import { Conversation, Message, Project } from "./types";
+import { BACKEND_BASE } from "./api";
 
 const STORAGE_PREFIX = "openclaw_chat_";
-const API_BASE = "http://localhost:3001/api";
+const API_BASE = BACKEND_BASE;
 
 type BackendAuth = {
   backendToken: string;

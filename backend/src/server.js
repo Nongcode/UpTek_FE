@@ -1,10 +1,10 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const multer = require('multer');
-const fs = require('fs');
-const path = require('path');
 const pool = require('./database');
+const mediaConfig = require('./config/media');
+const createMediaLegacyRoutes = require('./routes/mediaLegacyRoutes');
+const mediaRoutes = require('./routes/mediaRoutes');
 const {
   buildLoginResponse,
   canAccessConversation,
@@ -15,7 +15,7 @@ const { injectAutomationMessage } = require('./gateway-sync');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: `${Math.ceil(mediaConfig.maxUploadSizeMb * 1.5)}mb` }));
 const automationSyncToken = process.env.AUTOMATION_SYNC_TOKEN || "";
 
 function normalizeAgentId(value) {
@@ -67,59 +67,8 @@ app.use((req, res, next) => {
   }
 })();
 
-(async () => {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS "Images" (
-        "id" VARCHAR(255) PRIMARY KEY,
-        "url" TEXT NOT NULL,
-        "companyId" VARCHAR(255),
-        "departmentId" VARCHAR(255),
-        "source" VARCHAR(50),
-        "uploaderId" VARCHAR(255),
-        "createdAt" BIGINT,
-        "productModel" VARCHAR(255),
-        "prefix" VARCHAR(255)
-      );
-    `);
-    console.log('Ensure Images table exists.');
-  } catch (err) {
-    console.error('Failed to create Images table:', err.message);
-  }
-})();
-
-const storageDir = path.join(__dirname, '../storage/images');
-if (!fs.existsSync(storageDir)) {
-  fs.mkdirSync(storageDir, { recursive: true });
-}
-
-app.use('/storage/images', express.static(storageDir));
-
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const auth = req.auth || {};
-    let companyId = auth.companyId || 'default_company';
-    let departmentId = auth.departmentId || 'default_dept';
-
-    // Allow high-level roles to override storage destination via request body
-    const canOverride = auth.employeeId === 'admin' || auth.employeeId === 'Admin' || auth.employeeId === 'main' || auth.employeeId === 'giam_doc';
-    if (canOverride) {
-      if (req.body.companyId) companyId = req.body.companyId;
-      if (req.body.departmentId) departmentId = req.body.departmentId;
-    }
-
-    const dir = path.join(storageDir, companyId, departmentId);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    cb(null, dir);
-  },
-  filename: function (req, file, cb) {
-    const timestamp = Date.now();
-    cb(null, `${timestamp}_${file.originalname}`);
-  }
-});
-const upload = multer({ storage: storage });
+app.use(createMediaLegacyRoutes({ automationSyncToken }));
+app.use(mediaRoutes);
 
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body || {};
@@ -130,118 +79,6 @@ app.post('/api/auth/login', async (req, res) => {
     });
   }
   return res.json(result);
-});
-
-app.get('/api/gallery', requireBackendAuth, async (req, res) => {
-  try {
-    let result;
-    if (req.auth?.canViewAllSessions || req.auth?.employeeId === 'pho_phong' || req.auth?.employeeId === 'admin' || req.auth?.employeeId === 'quan_ly') {
-      result = await pool.query('SELECT * FROM "Images" ORDER BY "createdAt" DESC');
-    } else {
-      const companyId = req.auth?.companyId;
-      const departmentId = req.auth?.departmentId;
-      result = await pool.query(
-        'SELECT * FROM "Images" WHERE "companyId" = $1 AND "departmentId" = $2 ORDER BY "createdAt" DESC',
-        [companyId, departmentId]
-      );
-    }
-    return res.json(result.rows);
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/gallery/upload', requireBackendAuth, upload.array('images', 20), async (req, res) => {
-  if (!req.files || req.files.length === 0) {
-    return res.status(400).json({ error: 'No images uploaded' });
-  }
-  
-  const { productModel } = req.body;
-  if (!productModel) {
-    return res.status(400).json({ error: 'productModel is required for manual uploads' });
-  }
-
-  const auth = req.auth || {};
-  let companyId = auth.companyId || 'default_company';
-  let departmentId = auth.departmentId || 'default_dept';
-
-  const canOverride = auth.employeeId === 'admin' || auth.employeeId === 'Admin' || auth.employeeId === 'main' || auth.employeeId === 'giam_doc';
-  if (canOverride) {
-    if (req.body.companyId) companyId = req.body.companyId;
-    if (req.body.departmentId) departmentId = req.body.departmentId;
-  }
-
-  const uploaderId = auth.employeeId || 'unknown';
-  const createdAt = Date.now();
-  const source = 'User';
-  const prefix = null;
-
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const uploadedImages = [];
-
-    for (const file of req.files) {
-      const url = `/storage/images/${companyId}/${departmentId}/${file.filename}`;
-      const id = `img_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
-      await client.query(
-        `INSERT INTO "Images" ("id", "url", "companyId", "departmentId", "source", "uploaderId", "createdAt", "productModel", "prefix")
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [id, url, companyId, departmentId, source, uploaderId, createdAt, productModel, prefix]
-      );
-      uploadedImages.push({ id, url });
-    }
-
-    await client.query('COMMIT');
-    return res.json({ success: true, count: uploadedImages.length, images: uploadedImages });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    return res.status(500).json({ error: err.message });
-  } finally {
-    client.release();
-  }
-});
-
-app.post('/api/gallery/agent-upload', async (req, res) => {
-  if (automationSyncToken) {
-    const incomingToken = req.get('x-automation-sync-token') || '';
-    if (incomingToken !== automationSyncToken) {
-      return res.status(401).json({ error: 'Unauthorized automation sync token' });
-    }
-  }
-
-  const { companyId = 'default_company', departmentId = 'default_dept', filename, base64Data, agentId, productModel, prefix } = req.body;
-  if (!filename || !base64Data || !productModel || !prefix) {
-    return res.status(400).json({ error: 'filename, base64Data, productModel, and prefix are required' });
-  }
-
-  const dir = path.join(storageDir, companyId, departmentId);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-
-  const timestamp = Date.now();
-  const safeFilename = `${timestamp}_${filename.replace(/[^a-zA-Z0-9.\-_]/g, '')}`;
-  const filePath = path.join(dir, safeFilename);
-
-  fs.writeFileSync(filePath, base64Data, 'base64');
-
-  const url = `/storage/images/${companyId}/${departmentId}/${safeFilename}`;
-  const id = `img_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  const source = 'AI';
-  const uploaderId = agentId || 'agent';
-
-  try {
-    await pool.query(
-      `INSERT INTO "Images" ("id", "url", "companyId", "departmentId", "source", "uploaderId", "createdAt", "productModel", "prefix")
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [id, url, companyId, departmentId, source, uploaderId, timestamp, productModel, prefix]
-    );
-    return res.json({ success: true, url, id });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
 });
 
 app.get('/api/conversations/:employeeId', requireBackendAuth, async (req, res) => {
@@ -630,7 +467,25 @@ app.delete('/api/conversations/:id', requireBackendAuth, async (req, res) => {
   }
 });
 
+app.use((err, req, res, next) => {
+  if (err?.type === 'entity.too.large') {
+    return res.status(413).json({ error: `Request body too large. Max upload size is ${mediaConfig.maxUploadSizeMb} MB` });
+  }
+  if (err instanceof SyntaxError && 'body' in err) {
+    return res.status(400).json({ error: 'Invalid JSON request body' });
+  }
+  return next(err);
+});
+
 const PORT = 3001;
+void pool.checkConnection()
+  .then(() => {
+    console.log('Connected successfully to PostgreSQL Database.');
+  })
+  .catch((err) => {
+    console.error('Could not connect to PostgreSQL. Check DATABASE_URL.', err.stack || err.message || err);
+  });
+
 app.listen(PORT, () => {
   console.log(`Backend Server is running on http://localhost:${PORT}`);
 });

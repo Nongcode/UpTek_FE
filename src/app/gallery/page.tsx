@@ -3,23 +3,21 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/context/AuthContext";
 import toast from "react-hot-toast";
-
-interface ImageItem {
-  id: string;
-  url: string;
-  companyId: string;
-  departmentId: string;
-  source: string;
-  uploaderId: string;
-  createdAt: number;
-  productModel?: string;
-  prefix?: string;
-}
+import SmartImage from "@/components/SmartImage";
+import {
+  fetchGalleryImages,
+  GalleryImageItem,
+  getGalleryGridImageSrc,
+  getGalleryImageAlt,
+  getGalleryOpenImageSrc,
+  resolveMediaUrl,
+  uploadGalleryImages,
+} from "@/lib/media";
 
 export default function GalleryPage() {
   const { backendToken, isAuthenticated, isLoading, employeeId, accessPolicy } = useAuth();
-  const [images, setImages] = useState<ImageItem[]>([]);
-  const [filteredImages, setFilteredImages] = useState<ImageItem[]>([]);
+  const [images, setImages] = useState<GalleryImageItem[]>([]);
+  const [filteredImages, setFilteredImages] = useState<GalleryImageItem[]>([]);
   const [activeTab, setActiveTab] = useState<string>("Tất cả");
   const [fetching, setFetching] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -50,13 +48,7 @@ export default function GalleryPage() {
   const fetchImages = async () => {
     try {
       setFetching(true);
-      const res = await fetch("http://localhost:3001/api/gallery", {
-        headers: {
-          Authorization: `Bearer ${backendToken}`,
-        },
-      });
-      if (!res.ok) throw new Error("Lỗi khi tải ảnh");
-      const data = await res.json();
+      const data = await fetchGalleryImages(backendToken);
       setImages(data);
     } catch (error: any) {
       toast.error(error.message || "Đã xảy ra lỗi");
@@ -149,15 +141,7 @@ export default function GalleryPage() {
         formData.append("images", file);
       });
 
-      const res = await fetch("http://localhost:3001/api/gallery/upload", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${backendToken}`,
-        },
-        body: formData,
-      });
-
-      if (!res.ok) throw new Error("Tải lên thất bại");
+      await uploadGalleryImages(formData, backendToken);
 
       toast.success(`Đã thêm ${selectedFiles.length} ảnh thành công!`);
       setShowUploadModal(false);
@@ -458,9 +442,20 @@ export default function GalleryPage() {
         </div>
       ) : (
         <div className="gallery-grid">
-          {filteredImages.map((img) => (
-            <div key={img.id} className="gallery-item" onClick={() => window.open(`http://localhost:3001${img.url}`, '_blank')}>
-              <img src={`http://localhost:3001${img.url}`} alt="Gallery item" loading="lazy" />
+          {filteredImages.map((img) => {
+            const gridSrc = getGalleryGridImageSrc(img);
+            const fallbackSrc = resolveMediaUrl(img.url);
+            const openSrc = getGalleryOpenImageSrc(img);
+
+            return (
+              <div
+                key={img.id}
+                className="gallery-item"
+                onClick={() => {
+                  if (openSrc) window.open(openSrc, "_blank");
+                }}
+              >
+                <SmartImage src={gridSrc} fallbackSrc={fallbackSrc} alt={getGalleryImageAlt(img)} />
               <div className="gallery-overlay">
                 <span style={{ 
                   background: img.source === "AI" ? "var(--accent-secondary)" : (document.documentElement.getAttribute('data-theme') === 'light' ? "#dbeafe" : "var(--accent-primary)"), 
@@ -500,8 +495,9 @@ export default function GalleryPage() {
                   </span>
                 </div>
               </div>
-            </div>
-          ))}
+              </div>
+            );
+          })}
         </div>
       )}
       {showUploadModal && (

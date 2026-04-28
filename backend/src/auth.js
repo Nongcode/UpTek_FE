@@ -373,12 +373,25 @@ function requireBackendAuth(req, res, next) {
   return next();
 }
 
+function optionalBackendAuth(req, res, next) {
+  const config = loadOpenClawConfig();
+  const queryToken = typeof req.query?.token === 'string' ? req.query.token : '';
+  const token = extractBearerToken(req) || queryToken;
+  const payload = token ? verifyBackendToken(config, token) : null;
+  if (payload) {
+    req.auth = payload;
+    req.openclawConfig = config;
+  }
+  return next();
+}
+
 module.exports = {
   buildLoginResponse,
   canAccessConversation,
   canAccessEmployeeId,
   extractBearerToken,
   loadOpenClawConfig,
+  optionalBackendAuth,
   requireBackendAuth,
   resolveConversationAgentId,
 };
