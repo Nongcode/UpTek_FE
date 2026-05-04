@@ -407,6 +407,305 @@ body {
   }
 }
 
+.user-table-wrapper {
+  overflow-x: auto;
+}
+
+.dashboard-full-span {
+  grid-column: 1 / -1;
+}
+
+.section-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.table-status-note {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.dashboard-inline-error {
+  margin-bottom: 1rem;
+  padding: 0.85rem 1rem;
+  border-radius: 10px;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.08);
+  color: #fca5a5;
+}
+
+.account-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.account-overview-item {
+  padding: 1rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-color);
+}
+
+.account-overview-item.full-width {
+  grid-column: 1 / -1;
+}
+
+.account-overview-label {
+  display: block;
+  margin-bottom: 0.4rem;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.role-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.group-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.group-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.45rem 0.85rem;
+  border-radius: 999px;
+  background: rgba(14, 165, 233, 0.16);
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  color: #c7f0ff;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.role-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(99, 102, 241, 0.18);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  font-size: 0.8rem;
+}
+
+.user-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 820px;
+}
+
+.user-table th,
+.user-table td {
+  padding: 0.9rem 0.8rem;
+  border-bottom: 1px solid var(--border-color);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.user-table th {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.user-table-name {
+  font-weight: 600;
+}
+
+.user-table-sub {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  margin-top: 0.2rem;
+}
+
+.user-actions-cell {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.dashboard-action-btn {
+  border: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  border-radius: 10px;
+  padding: 0.45rem 0.8rem;
+  cursor: pointer;
+}
+
+.dashboard-icon-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.dashboard-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.action-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.dashboard-action-btn:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.dashboard-action-btn.danger {
+  border-color: rgba(239, 68, 68, 0.35);
+  color: #fca5a5;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.status-badge.active {
+  background: rgba(34, 197, 94, 0.16);
+  color: #86efac;
+}
+
+.status-badge.disabled {
+  background: rgba(239, 68, 68, 0.16);
+  color: #fca5a5;
+}
+
+.user-table-empty {
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.user-table-empty.standalone {
+  padding: 1rem 0;
+}
+
+.user-groups-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.user-group-card {
+  border: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.025);
+  border-radius: 18px;
+  padding: 1rem;
+}
+
+.user-group-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.user-group-header h4 {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+}
+
+.user-group-header p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  max-width: 720px;
+}
+
+.user-group-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.55rem;
+}
+
+.group-metric-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.45rem 0.85rem;
+  border-radius: 999px;
+  background: rgba(99, 102, 241, 0.2);
+  border: 1px solid rgba(129, 140, 248, 0.34);
+  color: #eef2ff;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.group-metric-pill.subtle {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--border-color);
+  color: var(--text-secondary);
+}
+
+.detail-page-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.detail-back-btn {
+  white-space: nowrap;
+}
+
+.detail-manager-meta h3 {
+  margin: 0 0 0.35rem;
+}
+
+.detail-manager-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.manager-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+@media (max-width: 900px) {
+  .user-group-header {
+    flex-direction: column;
+  }
+
+  .user-group-metrics {
+    justify-content: flex-start;
+  }
+
+  .detail-page-header {
+    flex-direction: column;
+  }
+
+  .manager-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
 .agent-dropdown-header {
   font-size: 0.7rem;
   color: var(--text-secondary);
@@ -1204,7 +1503,7 @@ html[data-theme="light"] .search-modal {
 }
 
 /* =========================================
-   Surveillance Banner (Giám sát cấp dưới)
+   Surveillance Banner (GiÃƒÆ’Ã‚Â¡m sÃƒÆ’Ã‚Â¡t cÃƒÂ¡Ã‚ÂºÃ‚Â¥p dÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºi)
 ========================================= */
 .surveillance-banner {
   display: flex;
@@ -2127,7 +2426,7 @@ html[data-theme="light"] .docs-section:hover {
 }
 
 .role-card-tasks li::before {
-  content: "•";
+  content: "ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢";
   color: var(--accent-primary);
   font-weight: bold;
 }
@@ -2251,3 +2550,4 @@ html[data-theme="light"] .sidebar-nav-link.active {
 
 
 }
+

@@ -49,6 +49,8 @@ export interface AccessPolicy {
   lockSession?: boolean;
   autoConnect?: boolean;
   enforcedByServer?: boolean;
+  role?: string;
+  status?: string;
 }
 
 export interface DemoLoginAccount {
@@ -89,3 +91,31 @@ export interface AuthState {
   employeeName: string | null;
   employeeId: string | null;
 }
+
+export interface SystemUser {
+  id: string;
+  email: string;
+  employeeId: string;
+  employeeName: string;
+  role: string;
+  status: "active" | "disabled";
+  lockedAgentId: string;
+  canViewAllSessions: boolean;
+  visibleAgentIds: string[];
+  createdAt: string;
+  updatedAt: string;
+  disabledAt?: string | null;
+}
+
+export interface UserStatsSummary {
+  total: number;
+  active: number;
+  disabled: number;
+  byRole: Record<string, number>;
+}
+
+export interface UsersResponse {
+  users: SystemUser[];
+  stats: UserStatsSummary;
+}
+

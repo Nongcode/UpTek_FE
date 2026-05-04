@@ -1,7 +1,13 @@
-import { BootstrapConfig, LoginResponse } from "./types";
+import { BootstrapConfig, LoginResponse, UsersResponse } from "./types";
 
 const GATEWAY_BASE = "/api/gateway";
 export const BACKEND_BASE = process.env.NEXT_PUBLIC_BACKEND_API_BASE || "/api/backend";
+
+function buildBackendAuthHeaders(backendToken: string): HeadersInit {
+  return {
+    Authorization: `Bearer ${backendToken}`,
+  };
+}
 
 export async function fetchBootstrapConfig(): Promise<BootstrapConfig> {
   const res = await fetch(`${GATEWAY_BASE}/__openclaw/control-ui-config.json`);
@@ -13,7 +19,7 @@ export async function fetchBootstrapConfig(): Promise<BootstrapConfig> {
 
 export async function login(
   email: string,
-  password: string
+  password: string,
 ): Promise<LoginResponse> {
   const res = await fetch(`${BACKEND_BASE}/auth/login`, {
     method: "POST",
@@ -23,10 +29,51 @@ export async function login(
   if (!res.ok) {
     const data = await res.json().catch(() => null);
     throw new Error(
-      data?.error?.message || `Login failed with status ${res.status}`
+      data?.error?.message || `Login failed with status ${res.status}`,
     );
   }
   return res.json();
+}
+
+export async function fetchUsers(backendToken: string): Promise<UsersResponse> {
+  const res = await fetch(`${BACKEND_BASE}/users`, {
+    headers: buildBackendAuthHeaders(backendToken),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.error || `Load users failed with status ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateUserStatus(
+  backendToken: string,
+  userId: string,
+  status: "active" | "disabled",
+): Promise<void> {
+  const res = await fetch(`${BACKEND_BASE}/users/${userId}/status`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildBackendAuthHeaders(backendToken),
+    },
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.error || `Update user failed with status ${res.status}`);
+  }
+}
+
+export async function deleteUser(backendToken: string, userId: string): Promise<void> {
+  const res = await fetch(`${BACKEND_BASE}/users/${userId}`, {
+    method: "DELETE",
+    headers: buildBackendAuthHeaders(backendToken),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.error || `Delete user failed with status ${res.status}`);
+  }
 }
 
 export interface ChatCompletionOptions {
@@ -42,7 +89,7 @@ export interface ChatCompletionOptions {
 }
 
 export async function streamChatCompletion(
-  opts: ChatCompletionOptions
+  opts: ChatCompletionOptions,
 ): Promise<void> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -53,13 +100,11 @@ export async function streamChatCompletion(
     headers["X-OpenClaw-Session-Key"] = opts.sessionKey;
   }
 
-  // Gửi agent ID qua header để Gateway route chính xác đến đúng bộ não agent
   if (opts.agentId) {
     headers["X-OpenClaw-Agent-Id"] = opts.agentId;
   }
 
   const body = {
-    // Gateway yêu cầu format "openclaw/<agentId>" hoặc "agent:<agentId>" để parse đúng
     model: opts.agentId ? `openclaw/${opts.agentId}` : (opts.model || "openclaw"),
     stream: true,
     messages: opts.messages,
@@ -76,7 +121,7 @@ export async function streamChatCompletion(
     if (!res.ok) {
       const errData = await res.json().catch(() => null);
       throw new Error(
-        errData?.error?.message || `Chat request failed: ${res.status}`
+        errData?.error?.message || `Chat request failed: ${res.status}`,
       );
     }
 
@@ -132,3 +177,4 @@ export async function streamChatCompletion(
     opts.onError(err as Error);
   }
 }
+

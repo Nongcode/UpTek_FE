@@ -1,17 +1,26 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const pool = require('./database');
-const mediaConfig = require('./config/media');
-const createMediaLegacyRoutes = require('./routes/mediaLegacyRoutes');
-const mediaRoutes = require('./routes/mediaRoutes');
+require("dotenv").config();
+const express = require("express");
+const cors = require("cors");
+const pool = require("./database");
+const mediaConfig = require("./config/media");
+const createMediaLegacyRoutes = require("./routes/mediaLegacyRoutes");
+const mediaRoutes = require("./routes/mediaRoutes");
 const {
   buildLoginResponse,
   canAccessConversation,
   canAccessEmployeeId,
   requireBackendAuth,
-} = require('./auth');
-const { injectAutomationMessage } = require('./gateway-sync');
+} = require("./auth");
+const {
+  ACTIVE_STATUS,
+  DISABLED_STATUS,
+  canManageUsers,
+  deleteUser,
+  initializeUserStore,
+  listUsers,
+  updateUserStatus,
+} = require("./user-management");
+const { injectAutomationMessage } = require("./gateway-sync");
 
 const app = express();
 app.use(cors());
@@ -19,7 +28,7 @@ app.use(express.json({ limit: `${Math.ceil(mediaConfig.maxUploadSizeMb * 1.5)}mb
 const automationSyncToken = process.env.AUTOMATION_SYNC_TOKEN || "";
 
 function normalizeAgentId(value) {
-  const normalized = String(value || '').trim().toLowerCase();
+  const normalized = String(value || "").trim().toLowerCase();
   if (!normalized) {
     return undefined;
   }
@@ -39,58 +48,108 @@ function resolveAccessibleAutomationAgents(auth) {
 }
 
 function isAutomationConversation(conversation) {
-  const sessionKey = String(conversation?.sessionKey || '');
-  const id = String(conversation?.id || '');
-  const title = String(conversation?.title || '');
+  const sessionKey = String(conversation?.sessionKey || "");
+  const id = String(conversation?.id || "");
+  const title = String(conversation?.title || "");
   return (
-    sessionKey.startsWith('automation:')
-    || id.startsWith('auto_')
-    || title.startsWith('[AUTO]')
+    sessionKey.startsWith("automation:")
+    || id.startsWith("auto_")
+    || title.startsWith("[AUTO]")
   );
 }
 
-// Log every request for easier debugging.
+function buildUserStats(users) {
+  return users.reduce(
+    (stats, user) => {
+      stats.total += 1;
+      if (user.status === DISABLED_STATUS) {
+        stats.disabled += 1;
+      } else {
+        stats.active += 1;
+      }
+      stats.byRole[user.role] = (stats.byRole[user.role] || 0) + 1;
+      return stats;
+    },
+    { total: 0, active: 0, disabled: 0, byRole: {} },
+  );
+}
+
 app.use((req, res, next) => {
   console.log(`[${new Date().toLocaleTimeString()}] ${req.method} ${req.url}`);
   next();
 });
 
-// Clean up orphaned messages at startup.
 (async () => {
   try {
+    await initializeUserStore();
     const result = await pool.query('DELETE FROM "Messages" WHERE "conversationId" IS NULL');
     if (result.rowCount > 0) {
       console.log(`Deleted ${result.rowCount} orphaned messages.`);
     }
   } catch (err) {
-    console.error('Failed to clean up Messages:', err.message);
+    console.error("Startup initialization failed:", err.message);
   }
 })();
 
 app.use(createMediaLegacyRoutes({ automationSyncToken }));
 app.use(mediaRoutes);
 
-app.post('/api/auth/login', async (req, res) => {
+app.post("/api/auth/login", async (req, res) => {
   const { email, password } = req.body || {};
-  const result = buildLoginResponse(email, password);
+  const result = await buildLoginResponse(email, password);
   if (!result) {
     return res.status(401).json({
-      error: { message: 'Invalid email or password', type: 'unauthorized' },
+      error: { message: "Invalid email or password", type: "unauthorized" },
     });
+  }
+  if (result.ok === false) {
+    return res.status(403).json({ error: result.error });
   }
   return res.json(result);
 });
 
-app.get('/api/conversations/:employeeId', requireBackendAuth, async (req, res) => {
+app.get("/api/users", requireBackendAuth, async (req, res) => {
+  if (!canManageUsers(req.auth)) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  try {
+    const users = await listUsers();
+    return res.json({ users, stats: buildUserStats(users) });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/users/:id/status", requireBackendAuth, async (req, res) => {
+  try {
+    const nextStatus = req.body?.status === DISABLED_STATUS ? DISABLED_STATUS : ACTIVE_STATUS;
+    const user = await updateUserStatus(req.params.id, nextStatus, req.auth);
+    return res.json({ success: true, user });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/users/:id", requireBackendAuth, async (req, res) => {
+  try {
+    await deleteUser(req.params.id, req.auth);
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ error: err.message });
+  }
+});
+
+app.get("/api/conversations/:employeeId", requireBackendAuth, async (req, res) => {
   const { employeeId } = req.params;
-  const includeAutomation = req.query.includeAutomation === '1' || req.query.includeAutomation === 'true';
+  const includeAutomation = req.query.includeAutomation === "1" || req.query.includeAutomation === "true";
   if (!canAccessEmployeeId(req.auth, employeeId)) {
-    return res.status(403).json({ error: 'Forbidden' });
+    return res.status(403).json({ error: "Forbidden" });
   }
   try {
     const convResult = await pool.query(
       'SELECT * FROM "Conversations" WHERE "employeeId" = $1 ORDER BY "updatedAt" DESC',
-      [employeeId]
+      [employeeId],
     );
 
     let convRows = convResult.rows;
@@ -109,7 +168,7 @@ app.get('/api/conversations/:employeeId', requireBackendAuth, async (req, res) =
            WHERE "sessionKey" LIKE 'automation:%'
               OR "id" LIKE 'auto_%'
               OR "title" LIKE '[AUTO]%'
-           ORDER BY "updatedAt" DESC`
+           ORDER BY "updatedAt" DESC`,
         );
         autoRows = autoResult.rows;
       } else if (isOwnScope) {
@@ -128,7 +187,7 @@ app.get('/api/conversations/:employeeId', requireBackendAuth, async (req, res) =
                  OR "title" LIKE '[AUTO]%'
                )
              ORDER BY "updatedAt" DESC`,
-            [accessibleAgentIds]
+            [accessibleAgentIds],
           );
           autoRows = autoResult.rows;
         }
@@ -146,7 +205,7 @@ app.get('/api/conversations/:employeeId', requireBackendAuth, async (req, res) =
                OR "title" LIKE '[AUTO]%'
              )
            ORDER BY "updatedAt" DESC`,
-          [requestedAgentId]
+          [requestedAgentId],
         );
         autoRows = autoResult.rows;
       }
@@ -169,11 +228,11 @@ app.get('/api/conversations/:employeeId', requireBackendAuth, async (req, res) =
     }
 
     const convIds = convRows.map((conversation) => conversation.id);
-    const placeholders = convIds.map((_, index) => `$${index + 1}`).join(',');
+    const placeholders = convIds.map((_, index) => `$${index + 1}`).join(",");
 
     const msgResult = await pool.query(
       `SELECT * FROM "Messages" WHERE "conversationId" IN (${placeholders}) ORDER BY "timestamp" ASC`,
-      convIds
+      convIds,
     );
     const msgRows = msgResult.rows;
 
@@ -191,9 +250,9 @@ app.get('/api/conversations/:employeeId', requireBackendAuth, async (req, res) =
   }
 });
 
-app.get('/api/conversations-global', requireBackendAuth, async (req, res) => {
+app.get("/api/conversations-global", requireBackendAuth, async (req, res) => {
   if (!req.auth?.canViewAllSessions) {
-    return res.status(403).json({ error: 'Forbidden' });
+    return res.status(403).json({ error: "Forbidden" });
   }
   try {
     const convResult = await pool.query('SELECT * FROM "Conversations" ORDER BY "updatedAt" DESC');
@@ -203,11 +262,11 @@ app.get('/api/conversations-global', requireBackendAuth, async (req, res) => {
   }
 });
 
-app.post('/api/conversations', requireBackendAuth, async (req, res) => {
+app.post("/api/conversations", requireBackendAuth, async (req, res) => {
   const { id, title, agentId, sessionKey, projectId, status, createdAt, updatedAt, employeeId } = req.body;
   const requestedConversation = { id, title, agentId, sessionKey, employeeId };
   if (!canAccessConversation(req.auth, requestedConversation)) {
-    return res.status(403).json({ error: 'Forbidden' });
+    return res.status(403).json({ error: "Forbidden" });
   }
   try {
     await pool.query(
@@ -222,7 +281,7 @@ app.post('/api/conversations', requireBackendAuth, async (req, res) => {
          "status" = COALESCE(EXCLUDED."status", "Conversations"."status"),
          "updatedAt" = COALESCE(EXCLUDED."updatedAt", "Conversations"."updatedAt"),
          "employeeId" = COALESCE(EXCLUDED."employeeId", "Conversations"."employeeId")`,
-      [id, title, agentId, sessionKey, projectId, status, createdAt, updatedAt, employeeId]
+      [id, title, agentId, sessionKey, projectId, status, createdAt, updatedAt, employeeId],
     );
     return res.json({ success: true, id });
   } catch (err) {
@@ -230,17 +289,17 @@ app.post('/api/conversations', requireBackendAuth, async (req, res) => {
   }
 });
 
-app.put('/api/conversations/:id', requireBackendAuth, async (req, res) => {
+app.put("/api/conversations/:id", requireBackendAuth, async (req, res) => {
   const { id } = req.params;
   const { title, status, updatedAt } = req.body;
   try {
     const existing = await pool.query('SELECT * FROM "Conversations" WHERE "id" = $1 LIMIT 1', [id]);
     const conversation = existing.rows[0];
     if (!conversation) {
-      return res.status(404).json({ error: 'Conversation not found' });
+      return res.status(404).json({ error: "Conversation not found" });
     }
     if (!canAccessConversation(req.auth, conversation)) {
-      return res.status(403).json({ error: 'Forbidden' });
+      return res.status(403).json({ error: "Forbidden" });
     }
     await pool.query(
       `UPDATE "Conversations"
@@ -248,7 +307,7 @@ app.put('/api/conversations/:id', requireBackendAuth, async (req, res) => {
            "status" = COALESCE($2, "status"),
            "updatedAt" = COALESCE($3, "updatedAt")
        WHERE "id" = $4`,
-      [title, status, updatedAt, id]
+      [title, status, updatedAt, id],
     );
     return res.json({ success: true });
   } catch (err) {
@@ -256,7 +315,7 @@ app.put('/api/conversations/:id', requireBackendAuth, async (req, res) => {
   }
 });
 
-app.post('/api/messages', requireBackendAuth, async (req, res) => {
+app.post("/api/messages", requireBackendAuth, async (req, res) => {
   const { messages } = req.body;
   if (!messages || !messages.length) {
     return res.json({ success: true });
@@ -264,59 +323,59 @@ app.post('/api/messages', requireBackendAuth, async (req, res) => {
 
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
+    await client.query("BEGIN");
     for (const message of messages) {
       const conversationResult = await client.query(
         'SELECT * FROM "Conversations" WHERE "id" = $1 LIMIT 1',
-        [message.conversationId]
+        [message.conversationId],
       );
       const conversation = conversationResult.rows[0];
       if (!conversation) {
         throw new Error(`Conversation not found for message ${message.id}`);
       }
       if (!canAccessConversation(req.auth, conversation)) {
-        await client.query('ROLLBACK');
-        return res.status(403).json({ error: 'Forbidden' });
+        await client.query("ROLLBACK");
+        return res.status(403).json({ error: "Forbidden" });
       }
       await client.query(
         `INSERT INTO "Messages" ("id", "conversationId", "role", "type", "content", "timestamp")
          VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT ("id") DO UPDATE SET "content" = EXCLUDED."content"`,
-        [message.id, message.conversationId, message.role, message.type, message.content, message.timestamp]
+        [message.id, message.conversationId, message.role, message.type, message.content, message.timestamp],
       );
     }
-    await client.query('COMMIT');
+    await client.query("COMMIT");
     return res.json({ success: true });
   } catch (err) {
-    await client.query('ROLLBACK');
+    await client.query("ROLLBACK");
     return res.status(500).json({ error: err.message });
   } finally {
     client.release();
   }
 });
 
-app.post('/api/automation/agent-event', async (req, res) => {
+app.post("/api/automation/agent-event", async (req, res) => {
   if (automationSyncToken) {
-    const incomingToken = req.get('x-automation-sync-token') || '';
+    const incomingToken = req.get("x-automation-sync-token") || "";
     if (incomingToken !== automationSyncToken) {
-      return res.status(401).json({ error: 'Unauthorized automation sync token' });
+      return res.status(401).json({ error: "Unauthorized automation sync token" });
     }
   }
 
   const {
     workflowId,
-    employeeId = 'pho_phong',
-    agentId = 'pho_phong',
+    employeeId = "pho_phong",
+    agentId = "pho_phong",
     title,
-    role = 'assistant',
-    type = 'regular',
+    role = "assistant",
+    type = "regular",
     content,
     timestamp = Date.now(),
     eventId,
   } = req.body || {};
 
   if (!workflowId || !content) {
-    return res.status(400).json({ error: 'workflowId and content are required' });
+    return res.status(400).json({ error: "workflowId and content are required" });
   }
 
   const safeTimestamp = Number(timestamp) || Date.now();
@@ -325,13 +384,13 @@ app.post('/api/automation/agent-event', async (req, res) => {
 
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
+    await client.query("BEGIN");
 
     let shouldInjectToGateway = false;
 
     const existingResult = await client.query(
       'SELECT "id", "employeeId" FROM "Conversations" WHERE "sessionKey" = $1 LIMIT 1',
-      [sessionKey]
+      [sessionKey],
     );
 
     let conversationId;
@@ -355,7 +414,7 @@ app.post('/api/automation/agent-event', async (req, res) => {
           agentId,
           `automation:${agentId}:conv_%`,
           `automation:${agentId}:${employeeId}:conv_%`,
-        ]
+        ],
       );
 
       conversationId = canonicalConversationId;
@@ -367,7 +426,7 @@ app.post('/api/automation/agent-event', async (req, res) => {
         await client.query('DELETE FROM "Conversations" WHERE "id" = $1', [conversationId]);
         await client.query(
           'UPDATE "Messages" SET "conversationId" = $1 WHERE "conversationId" = $2',
-          [conversationId, draftConversationId]
+          [conversationId, draftConversationId],
         );
         await client.query('DELETE FROM "Conversations" WHERE "id" = $1', [draftConversationId]);
       }
@@ -375,11 +434,11 @@ app.post('/api/automation/agent-event', async (req, res) => {
 
     const messageId = eventId || `auto_msg_${workflowId}_${safeTimestamp}_${role}_${type}`;
     const conversationTitle = title || `[AUTO] ${agentId} • ${workflowId}`;
-    const nextStatus = type === 'approval_request' ? 'pending_approval' : 'active';
+    const nextStatus = type === "approval_request" ? "pending_approval" : "active";
 
     const existingMessageResult = await client.query(
       'SELECT 1 FROM "Messages" WHERE "id" = $1 LIMIT 1',
-      [messageId]
+      [messageId],
     );
     shouldInjectToGateway = existingMessageResult.rows.length === 0;
 
@@ -406,17 +465,17 @@ app.post('/api/automation/agent-event', async (req, res) => {
         safeTimestamp,
         safeTimestamp,
         finalEmployeeId,
-      ]
+      ],
     );
 
     await client.query(
       `INSERT INTO "Messages" ("id", "conversationId", "role", "type", "content", "timestamp")
        VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT ("id") DO UPDATE SET "content" = EXCLUDED."content", "timestamp" = EXCLUDED."timestamp"`,
-      [messageId, conversationId, role, type, String(content).slice(0, 4000), safeTimestamp]
+      [messageId, conversationId, role, type, String(content).slice(0, 4000), safeTimestamp],
     );
 
-    await client.query('COMMIT');
+    await client.query("COMMIT");
 
     if (shouldInjectToGateway) {
       try {
@@ -427,40 +486,40 @@ app.post('/api/automation/agent-event', async (req, res) => {
           label: agentId,
         });
       } catch (syncError) {
-        console.error('Failed to sync automation message to gateway transcript:', syncError.message);
+        console.error("Failed to sync automation message to gateway transcript:", syncError.message);
       }
     }
 
     return res.json({ success: true, conversationId, messageId });
   } catch (err) {
-    await client.query('ROLLBACK');
+    await client.query("ROLLBACK");
     return res.status(500).json({ error: err.message });
   } finally {
     client.release();
   }
 });
 
-app.delete('/api/conversations/:id', requireBackendAuth, async (req, res) => {
+app.delete("/api/conversations/:id", requireBackendAuth, async (req, res) => {
   const { id } = req.params;
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
+    await client.query("BEGIN");
     const existing = await client.query('SELECT * FROM "Conversations" WHERE "id" = $1 LIMIT 1', [id]);
     const conversation = existing.rows[0];
     if (!conversation) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Conversation not found' });
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Conversation not found" });
     }
     if (!canAccessConversation(req.auth, conversation)) {
-      await client.query('ROLLBACK');
-      return res.status(403).json({ error: 'Forbidden' });
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "Forbidden" });
     }
     await client.query('DELETE FROM "Messages" WHERE "conversationId" = $1', [id]);
     await client.query('DELETE FROM "Conversations" WHERE "id" = $1', [id]);
-    await client.query('COMMIT');
+    await client.query("COMMIT");
     return res.json({ success: true });
   } catch (err) {
-    await client.query('ROLLBACK');
+    await client.query("ROLLBACK");
     return res.status(500).json({ error: err.message });
   } finally {
     client.release();
@@ -468,11 +527,11 @@ app.delete('/api/conversations/:id', requireBackendAuth, async (req, res) => {
 });
 
 app.use((err, req, res, next) => {
-  if (err?.type === 'entity.too.large') {
+  if (err?.type === "entity.too.large") {
     return res.status(413).json({ error: `Request body too large. Max upload size is ${mediaConfig.maxUploadSizeMb} MB` });
   }
-  if (err instanceof SyntaxError && 'body' in err) {
-    return res.status(400).json({ error: 'Invalid JSON request body' });
+  if (err instanceof SyntaxError && "body" in err) {
+    return res.status(400).json({ error: "Invalid JSON request body" });
   }
   return next(err);
 });
@@ -480,10 +539,10 @@ app.use((err, req, res, next) => {
 const PORT = 3001;
 void pool.checkConnection()
   .then(() => {
-    console.log('Connected successfully to PostgreSQL Database.');
+    console.log("Connected successfully to PostgreSQL Database.");
   })
   .catch((err) => {
-    console.error('Could not connect to PostgreSQL. Check DATABASE_URL.', err.stack || err.message || err);
+    console.error("Could not connect to PostgreSQL. Check DATABASE_URL.", err.stack || err.message || err);
   });
 
 app.listen(PORT, () => {

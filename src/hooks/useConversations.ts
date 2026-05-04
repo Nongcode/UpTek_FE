@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
@@ -91,7 +91,7 @@ function resolveSessionBoxTitle(
     return generateConversationTitle([firstHumanMessage]);
   }
 
-  return representative.title || latestConversation.title || "Luồng tự động";
+  return representative.title || latestConversation.title || "Luá»“ng tá»± Ä‘á»™ng";
 }
 
 function buildSessionBoxConversations(
@@ -404,7 +404,7 @@ export function useConversations({
     try {
       await apiUpdateConversation(conversationId, { status, updatedAt }, { backendToken });
     } catch {
-      toast.error("KhÃ´ng thá»ƒ Ä‘á»“ng bá»™ tráº¡ng thÃ¡i há»™i thoáº¡i.");
+      toast.error("KhÃƒÂ´ng thÃ¡Â»Æ’ Ã„â€˜Ã¡Â»â€œng bÃ¡Â»â„¢ trÃ¡ÂºÂ¡ng thÃƒÂ¡i hÃ¡Â»â„¢i thoÃ¡ÂºÂ¡i.");
     }
   };
 
@@ -478,7 +478,7 @@ export function useConversations({
         ],
       );
     } catch {
-      toast.error("KhÃ´ng thá»ƒ lÆ°u pháº£n há»“i cá»§a AI. Vui lÃ²ng táº£i láº¡i há»™i thoáº¡i.");
+      toast.error("KhÃƒÂ´ng thÃ¡Â»Æ’ lÃ†Â°u phÃ¡ÂºÂ£n hÃ¡Â»â€œi cÃ¡Â»Â§a AI. Vui lÃƒÂ²ng tÃ¡ÂºÂ£i lÃ¡ÂºÂ¡i hÃ¡Â»â„¢i thoÃ¡ÂºÂ¡i.");
     }
   };
 
@@ -512,7 +512,7 @@ export function useConversations({
     } catch {
       await applyConversations(previousConversations);
       setActiveId(previousActiveId);
-      toast.error("Lá»—i káº¿t ná»‘i, khÃ´ng thá»ƒ táº¡o há»™i thoáº¡i má»›i.");
+      toast.error("LÃ¡Â»â€”i kÃ¡ÂºÂ¿t nÃ¡Â»â€˜i, khÃƒÂ´ng thÃ¡Â»Æ’ tÃ¡ÂºÂ¡o hÃ¡Â»â„¢i thoÃ¡ÂºÂ¡i mÃ¡Â»â€ºi.");
     }
   };
 
@@ -546,7 +546,7 @@ export function useConversations({
     } catch {
       await applyConversations(previousConversations);
       setActiveId(previousActiveId);
-      toast.error("Lá»—i káº¿t ná»‘i, khÃ´ng thá»ƒ xÃ³a há»™i thoáº¡i.");
+      toast.error("LÃ¡Â»â€”i kÃ¡ÂºÂ¿t nÃ¡Â»â€˜i, khÃƒÂ´ng thÃ¡Â»Æ’ xÃƒÂ³a hÃ¡Â»â„¢i thoÃ¡ÂºÂ¡i.");
     }
   };
 
@@ -622,7 +622,7 @@ export function useConversations({
     } catch {
       await applyConversations(snapshotBeforeSend);
       setActiveId(previousActiveId);
-      toast.error("Lá»—i káº¿t ná»‘i, khÃ´ng thá»ƒ gá»­i tin nháº¯n.");
+      toast.error("LÃ¡Â»â€”i kÃ¡ÂºÂ¿t nÃ¡Â»â€˜i, khÃƒÂ´ng thÃ¡Â»Æ’ gÃ¡Â»Â­i tin nhÃ¡ÂºÂ¯n.");
       return;
     }
 
@@ -681,13 +681,13 @@ export function useConversations({
           const errorContent = aiContent
             ? `${aiContent}\n\n**[Loi: ${error.message}]**`
             : `**[Loi: ${error.message}]**`;
-          toast.error("Káº¿t ná»‘i tá»›i AI bá»‹ giÃ¡n Ä‘oáº¡n. Vui lÃ²ng thá»­ láº¡i.");
+          toast.error("KÃ¡ÂºÂ¿t nÃ¡Â»â€˜i tÃ¡Â»â€ºi AI bÃ¡Â»â€¹ giÃƒÂ¡n Ã„â€˜oÃ¡ÂºÂ¡n. Vui lÃƒÂ²ng thÃ¡Â»Â­ lÃ¡ÂºÂ¡i.");
           void commitAssistantMessage(conversationId, aiMessageId, errorContent, "pending_approval");
         },
       });
     } catch {
       cleanupStreaming(conversationId, aiMessageId);
-      toast.error("KhÃ´ng thá»ƒ báº¯t Ä‘áº§u phiÃªn streaming.");
+      toast.error("KhÃƒÂ´ng thÃ¡Â»Æ’ bÃ¡ÂºÂ¯t Ã„â€˜Ã¡ÂºÂ§u phiÃƒÂªn streaming.");
     }
   };
 

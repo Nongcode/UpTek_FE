@@ -1,75 +1,12 @@
 require("dotenv").config();
 const crypto = require("crypto");
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
+const { loadOpenClawConfig } = require("./openclaw-config");
+const { buildUserAccessPolicy, getLoginAttemptResult } = require("./user-management");
 
-const DEFAULT_CONFIG_PATH = process.env.OPENCLAW_CONFIG_PATH || path.join(os.homedir(), ".openclaw", "openclaw.json");
-const DEFAULT_CONFIG_BACKUP_PATH = `${DEFAULT_CONFIG_PATH}.bak`;
 const BACKEND_TOKEN_TTL_MS = Number(process.env.BACKEND_AUTH_TTL_MS || 12 * 60 * 60 * 1000);
-
-function readJsonIfExists(filePath) {
-  try {
-    if (!fs.existsSync(filePath)) {
-      return null;
-    }
-    const raw = fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "");
-    return JSON.parse(raw);
-  } catch (error) {
-    console.error(`Failed to read config ${filePath}:`, error.message);
-    return null;
-  }
-}
-
-function deepClone(value) {
-  return value == null ? value : JSON.parse(JSON.stringify(value));
-}
-
-function mergeControlUiConfig(primaryConfig, backupConfig) {
-  const merged = deepClone(primaryConfig || {}) || {};
-  const primaryGateway = merged.gateway || {};
-  const backupGateway = backupConfig?.gateway || {};
-  const primaryControlUi = primaryGateway.controlUi || {};
-  const backupControlUi = backupGateway.controlUi || {};
-
-  merged.gateway = {
-    ...backupGateway,
-    ...primaryGateway,
-    controlUi: {
-      ...backupControlUi,
-      ...primaryControlUi,
-      allowedOrigins: primaryControlUi.allowedOrigins || backupControlUi.allowedOrigins,
-      employeeDirectory:
-        Array.isArray(primaryControlUi.employeeDirectory) && primaryControlUi.employeeDirectory.length > 0
-          ? primaryControlUi.employeeDirectory
-          : (backupControlUi.employeeDirectory || []),
-      demoLogin:
-        primaryControlUi.demoLogin?.enabled
-          ? primaryControlUi.demoLogin
-          : backupControlUi.demoLogin,
-    },
-    auth: {
-      ...(backupGateway.auth || {}),
-      ...(primaryGateway.auth || {}),
-    },
-  };
-
-  return merged;
-}
-
-function loadOpenClawConfig() {
-  const primaryConfig = readJsonIfExists(DEFAULT_CONFIG_PATH);
-  const backupConfig = readJsonIfExists(DEFAULT_CONFIG_BACKUP_PATH);
-  return mergeControlUiConfig(primaryConfig, backupConfig);
-}
 
 function normalizeText(value) {
   const normalized = String(value || "").trim();
-  return normalized || undefined;
-}
-
-function normalizeEmail(value) {
-  const normalized = normalizeText(value)?.toLowerCase();
   return normalized || undefined;
 }
 
@@ -152,7 +89,7 @@ function resolveAccessPolicyForEmployee(config, employeeId, employeeName) {
         const cId = "UpTek";
         let dId = "PhongMarketing";
         const empIdStr = normalizeText(entry.employeeId) || normalizeText(employeeId);
-        
+
         if (empIdStr === "admin") {
           dId = "All";
         } else if (empIdStr === "giam_doc" || empIdStr === "truong_phong" || empIdStr === "pho_phong_cskh") {
@@ -200,21 +137,6 @@ function resolveAccessPolicyForEmployee(config, employeeId, employeeName) {
   };
 }
 
-function findDemoAccount(config, email, password) {
-  const requestedEmail = normalizeEmail(email);
-  const requestedPassword = normalizeText(password);
-  const accounts = config?.gateway?.controlUi?.demoLogin?.accounts;
-  if (!requestedEmail || !requestedPassword || !Array.isArray(accounts)) {
-    return null;
-  }
-
-  return (
-    accounts.find((entry) => {
-      return normalizeEmail(entry.email) === requestedEmail && normalizeText(entry.password) === requestedPassword;
-    }) || null
-  );
-}
-
 function base64urlEncode(input) {
   return Buffer.from(input).toString("base64url");
 }
@@ -241,6 +163,7 @@ function issueBackendToken(config, accessPolicy) {
     lockedAgentId: accessPolicy.lockedAgentId || null,
     visibleAgentIds: accessPolicy.visibleAgentIds || [],
     canViewAllSessions: accessPolicy.canViewAllSessions === true,
+    role: accessPolicy.role || null,
     iat: now,
     exp: now + BACKEND_TOKEN_TTL_MS,
   };
@@ -290,7 +213,7 @@ function canAccessEmployeeId(auth, employeeId) {
     return false;
   }
   if (auth.canViewAllSessions) {
-    if (auth.employeeId === 'giam_doc' && (target === 'admin' || target === 'main')) {
+    if (auth.employeeId === "giam_doc" && (target === "admin" || target === "main")) {
       return false;
     }
     return true;
@@ -319,7 +242,7 @@ function canAccessConversation(auth, conversationLike) {
   const aId = resolveConversationAgentId(conversationLike);
 
   if (auth.canViewAllSessions) {
-    if (auth.employeeId === 'giam_doc' && (empId === 'admin' || empId === 'main' || aId === 'main')) {
+    if (auth.employeeId === "giam_doc" && (empId === "admin" || empId === "main" || aId === "main")) {
       return false;
     }
     return true;
@@ -335,14 +258,26 @@ function canAccessConversation(auth, conversationLike) {
   return resolveAllowedAgentIds(auth).includes(agentId);
 }
 
-function buildLoginResponse(email, password) {
+async function buildLoginResponse(email, password) {
   const config = loadOpenClawConfig();
-  const matchedAccount = findDemoAccount(config, email, password);
-  if (!matchedAccount) {
+  const loginAttempt = await getLoginAttemptResult(email, password);
+  if (!loginAttempt.ok) {
+    if (loginAttempt.reason === "blocked") {
+      return {
+        ok: false,
+        error: {
+          message: "Tài khoản của bạn đã bị chặn truy cập hệ thống",
+          type: "account_blocked",
+        },
+      };
+    }
     return null;
   }
 
-  const accessPolicy = resolveAccessPolicyForEmployee(config, matchedAccount.employeeId, matchedAccount.employeeName);
+  const matchedUser = loginAttempt.user;
+  const accessPolicy =
+    buildUserAccessPolicy(matchedUser) ||
+    resolveAccessPolicyForEmployee(config, matchedUser.employeeId, matchedUser.employeeName);
   if (!accessPolicy) {
     return null;
   }
@@ -375,7 +310,7 @@ function requireBackendAuth(req, res, next) {
 
 function optionalBackendAuth(req, res, next) {
   const config = loadOpenClawConfig();
-  const queryToken = typeof req.query?.token === 'string' ? req.query.token : '';
+  const queryToken = typeof req.query?.token === "string" ? req.query.token : "";
   const token = extractBearerToken(req) || queryToken;
   const payload = token ? verifyBackendToken(config, token) : null;
   if (payload) {
@@ -395,3 +330,4 @@ module.exports = {
   requireBackendAuth,
   resolveConversationAgentId,
 };
+
