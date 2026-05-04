@@ -2,6 +2,8 @@ require("dotenv").config();
 const crypto = require("crypto");
 const { loadOpenClawConfig } = require("./openclaw-config");
 const { buildUserAccessPolicy, getLoginAttemptResult } = require("./user-management");
+// GP3: import isManagerAgent để check agent type động, không hardcode
+const { isManagerAgent } = require("./manager-instances");
 
 const BACKEND_TOKEN_TTL_MS = Number(process.env.BACKEND_AUTH_TTL_MS || 12 * 60 * 60 * 1000);
 
@@ -33,11 +35,16 @@ function resolveDefaultVisibilityForLockedAgent(lockedAgentId) {
     case "quan_ly":
       return { canViewAllSessions: true, visibleAgentIds: [] };
     case "truong_phong":
+      // truong_phong có thể thấy pho_phong và các workers (danh sách tĩnh cho fallback)
       return { canViewAllSessions: false, visibleAgentIds: ["truong_phong", "pho_phong", "nv_content", "nv_media"] };
-    case "pho_phong":
-      return { canViewAllSessions: false, visibleAgentIds: ["pho_phong", "nv_content", "nv_media", "nv_prompt"] };
-    default:
+    default: {
+      // GP3: không hardcode "pho_phong" nữa.
+      // Visibility cho manager agents (pho_phong, ...) giờ được xác định
+      // dựa vào base agent key trong manager_worker_bindings (resolve ở runtime).
+      // Hàm này chỉ trả fallback — thực tế visibility của manager agent
+      // sẽ được ghi đè khi buildUserAccessPolicy chạy từ DB (có visible_agent_ids).
       return { canViewAllSessions: false, visibleAgentIds: [lockedAgentId] };
+    }
   }
 }
 

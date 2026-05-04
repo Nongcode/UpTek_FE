@@ -5,6 +5,8 @@ export interface Message {
   content: string;
   timestamp: number;
   conversationId?: string;
+  /** GP3: instance nào đã tạo/xử lý message này */
+  managerInstanceId?: string;
 }
 
 export interface Conversation {
@@ -19,6 +21,12 @@ export interface Conversation {
   employeeId?: string;
   createdAt: number;
   updatedAt: number;
+  /**
+   * GP3: ID của manager instance đã tạo conversation này.
+   * Cố định sau khi conversation được tạo — không thay đổi giữa chừng.
+   * Default: 'mgr_pho_phong_A'
+   */
+  managerInstanceId?: string;
 }
 
 export interface Project {

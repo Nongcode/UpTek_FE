@@ -21,6 +21,13 @@ const {
   updateUserStatus,
 } = require("./user-management");
 const { injectAutomationMessage } = require("./gateway-sync");
+const {
+  DEFAULT_MANAGER_INSTANCE_ID,
+  getWorkersForManager,
+  listManagerInstances,
+  validateManagerInstanceId,
+} = require("./manager-instances");
+const { resolveManagerForConversation } = require("./manager-router");
 
 const app = express();
 app.use(cors());
@@ -263,15 +270,22 @@ app.get("/api/conversations-global", requireBackendAuth, async (req, res) => {
 });
 
 app.post("/api/conversations", requireBackendAuth, async (req, res) => {
-  const { id, title, agentId, sessionKey, projectId, status, createdAt, updatedAt, employeeId } = req.body;
+  const { id, title, agentId, sessionKey, projectId, status, createdAt, updatedAt, employeeId, managerInstanceId: reqManagerInstanceId } = req.body;
   const requestedConversation = { id, title, agentId, sessionKey, employeeId };
   if (!canAccessConversation(req.auth, requestedConversation)) {
     return res.status(403).json({ error: "Forbidden" });
   }
   try {
+    // GP3: resolve managerInstanceId — nếu không truyền thì dùng router để chọn
+    const resolvedManagerInstanceId = await resolveManagerForConversation({
+      managerInstanceId: reqManagerInstanceId,
+      employeeId: req.auth?.employeeId,
+      agentId,
+    });
+
     await pool.query(
-      `INSERT INTO "Conversations" ("id", "title", "agentId", "sessionKey", "projectId", "status", "createdAt", "updatedAt", "employeeId")
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO "Conversations" ("id", "title", "agentId", "sessionKey", "projectId", "status", "createdAt", "updatedAt", "employeeId", "managerInstanceId")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT ("id")
        DO UPDATE SET
          "title" = COALESCE(EXCLUDED."title", "Conversations"."title"),
@@ -281,9 +295,10 @@ app.post("/api/conversations", requireBackendAuth, async (req, res) => {
          "status" = COALESCE(EXCLUDED."status", "Conversations"."status"),
          "updatedAt" = COALESCE(EXCLUDED."updatedAt", "Conversations"."updatedAt"),
          "employeeId" = COALESCE(EXCLUDED."employeeId", "Conversations"."employeeId")`,
-      [id, title, agentId, sessionKey, projectId, status, createdAt, updatedAt, employeeId],
+      // managerInstanceId KHÔNG update khi conflict: giữ cố định sau lần tạo đầu
+      [id, title, agentId, sessionKey, projectId, status, createdAt, updatedAt, employeeId, resolvedManagerInstanceId],
     );
-    return res.json({ success: true, id });
+    return res.json({ success: true, id, managerInstanceId: resolvedManagerInstanceId });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -364,6 +379,8 @@ app.post("/api/automation/agent-event", async (req, res) => {
 
   const {
     workflowId,
+    // GP3: employeeId/agentId vẫn giữ default "pho_phong" để backward-compatible
+    // nhưng managerInstanceId giờ là trường chính xác định luồng
     employeeId = "pho_phong",
     agentId = "pho_phong",
     title,
@@ -372,11 +389,20 @@ app.post("/api/automation/agent-event", async (req, res) => {
     content,
     timestamp = Date.now(),
     eventId,
+    // GP3: managerInstanceId xác định instance cụ thể (A, B, C...)
+    // Worker phải truyền field này khi gửi result về manager
+    managerInstanceId: reqManagerInstanceId,
+    // GP3: workerAgentId xác định worker nào đang gửi result (để tránh nhầm context)
+    workerAgentId,
   } = req.body || {};
 
   if (!workflowId || !content) {
     return res.status(400).json({ error: "workflowId and content are required" });
   }
+
+  // GP3: resolve managerInstanceId — nếu không truyền thì fallback về default
+  // Không validate strict ở đây để không break luồng cũ (backward-compatible)
+  const resolvedManagerInstanceId = reqManagerInstanceId || DEFAULT_MANAGER_INSTANCE_ID;
 
   const safeTimestamp = Number(timestamp) || Date.now();
   const sessionKey = `automation:${agentId}:${workflowId}`;
@@ -442,9 +468,10 @@ app.post("/api/automation/agent-event", async (req, res) => {
     );
     shouldInjectToGateway = existingMessageResult.rows.length === 0;
 
+    // GP3: lưu managerInstanceId vào Conversations — giữ cố định sau lần tạo đầu
     await client.query(
-      `INSERT INTO "Conversations" ("id", "title", "agentId", "sessionKey", "projectId", "status", "createdAt", "updatedAt", "employeeId")
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO "Conversations" ("id", "title", "agentId", "sessionKey", "projectId", "status", "createdAt", "updatedAt", "employeeId", "managerInstanceId")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT ("id")
        DO UPDATE SET
          "updatedAt" = EXCLUDED."updatedAt",
@@ -455,6 +482,7 @@ app.post("/api/automation/agent-event", async (req, res) => {
          "title" = EXCLUDED."title",
          "sessionKey" = EXCLUDED."sessionKey",
          "employeeId" = COALESCE("Conversations"."employeeId", EXCLUDED."employeeId")`,
+      // managerInstanceId KHÔNG update khi conflict: giữ cố định sau lần tạo đầu
       [
         conversationId,
         conversationTitle,
@@ -465,14 +493,16 @@ app.post("/api/automation/agent-event", async (req, res) => {
         safeTimestamp,
         safeTimestamp,
         finalEmployeeId,
+        resolvedManagerInstanceId,
       ],
     );
 
+    // GP3: lưu managerInstanceId vào Messages để worker result không bị nhầm context
     await client.query(
-      `INSERT INTO "Messages" ("id", "conversationId", "role", "type", "content", "timestamp")
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO "Messages" ("id", "conversationId", "role", "type", "content", "timestamp", "managerInstanceId")
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT ("id") DO UPDATE SET "content" = EXCLUDED."content", "timestamp" = EXCLUDED."timestamp"`,
-      [messageId, conversationId, role, type, String(content).slice(0, 4000), safeTimestamp],
+      [messageId, conversationId, role, type, String(content).slice(0, 4000), safeTimestamp, resolvedManagerInstanceId],
     );
 
     await client.query("COMMIT");
@@ -490,12 +520,49 @@ app.post("/api/automation/agent-event", async (req, res) => {
       }
     }
 
-    return res.json({ success: true, conversationId, messageId });
+    // GP3: response bao gồm managerInstanceId + workerAgentId để caller trace đúng context
+    return res.json({
+      success: true,
+      conversationId,
+      messageId,
+      managerInstanceId: resolvedManagerInstanceId,
+      workerAgentId: workerAgentId || null,
+    });
   } catch (err) {
     await client.query("ROLLBACK");
     return res.status(500).json({ error: err.message });
   } finally {
     client.release();
+  }
+});
+
+// ─── GP3: Manager Instance API endpoints ─────────────────────────────────────
+
+/** List tất cả manager instances (chỉ admin/giam_doc) */
+app.get("/api/manager-instances", requireBackendAuth, async (req, res) => {
+  if (!req.auth?.canViewAllSessions) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  try {
+    const instances = await listManagerInstances();
+    return res.json({ instances });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/** Lấy danh sách workers của một manager instance */
+app.get("/api/manager-instances/:id/workers", requireBackendAuth, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { valid, reason } = await validateManagerInstanceId(id);
+    if (!valid) {
+      return res.status(404).json({ error: reason });
+    }
+    const workers = await getWorkersForManager(id);
+    return res.json({ managerInstanceId: id, workers });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 });
 

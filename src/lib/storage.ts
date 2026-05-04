@@ -101,6 +101,8 @@ export function createConversation(
   projectId?: string,
   lane: "user" | "automation" = "user",
   ownerId?: string,
+  /** GP3: instance se xu ly conversation nay. Lock co dinh sau khi tao. */
+  managerInstanceId?: string,
 ): Conversation {
   const id = `conv_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
   const ownerSegment = (ownerId || "anon").replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -119,6 +121,8 @@ export function createConversation(
     status: "active",
     createdAt: Date.now(),
     updatedAt: Date.now(),
+    // GP3: managerInstanceId co dinh sau khi tao, default ve A neu khong truyen
+    managerInstanceId: managerInstanceId || "mgr_pho_phong_A",
   };
 }
 

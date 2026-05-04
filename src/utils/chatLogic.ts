@@ -3,13 +3,32 @@ import { AccessPolicy, Conversation } from "@/lib/types";
 export type ChatLane = "user" | "automation";
 export type AutomationStatus = "active" | "pending_approval" | "approved" | "cancelled";
 
-const AUTOMATION_ALLOWED_IDS = new Set([
-  "pho_phong",
+/**
+ * GP3: Danh sách các agent roles được phép truy cập automation lane.
+ * "pho_phong" không còn hardcode tên nữa — thay vào đó check theo lockedAgentId
+ * hoặc visibleAgentIds trong accessPolicy.
+ *
+ * Danh sách này chứa các "system-level" roles luôn được phép.
+ * Manager agents (pho_phong, ...) được phép qua canAccessAutomationLane() bên dưới
+ * dựa vào visibleAgentIds của họ (được load từ DB qua manager_worker_bindings).
+ */
+const AUTOMATION_ALWAYS_ALLOWED_ROLES = new Set([
   "quan_ly",
-  "truong_phong",
   "main",
   "admin",
+  "truong_phong",
 ]);
+
+/**
+ * GP3: Manager base agent keys — những agent này là manager template,
+ * instances của chúng luôn được truy cập automation lane.
+ * Thay vì hardcode "pho_phong" rải rác, chỉ cần thêm ở đây một chỗ.
+ */
+const MANAGER_BASE_AGENT_KEYS = new Set([
+  "pho_phong",
+  // Thêm manager agents mới ở đây khi cần
+]);
+
 
 export function detectLane(sessionKey: string | undefined): ChatLane {
   const key = String(sessionKey || "");
@@ -103,5 +122,25 @@ export function canAccessAutomationLane(
   }
 
   const normalized = String(employeeId || "").trim().toLowerCase();
-  return AUTOMATION_ALLOWED_IDS.has(normalized);
+
+  // System-level roles: luôn được phép
+  if (AUTOMATION_ALWAYS_ALLOWED_ROLES.has(normalized)) {
+    return true;
+  }
+
+  // GP3: Manager agent check — dựa vào lockedAgentId trong accessPolicy
+  // Khi user login với lockedAgentId = "pho_phong" (hoặc mgr_pho_phong_A...),
+  // hệ thống biết đây là manager agent và cho phép truy cập automation lane.
+  const lockedAgentId = String(accessPolicy?.lockedAgentId || "").trim().toLowerCase();
+  if (MANAGER_BASE_AGENT_KEYS.has(lockedAgentId)) {
+    return true;
+  }
+
+  // GP3: nếu employeeId chính là một manager base agent key
+  if (MANAGER_BASE_AGENT_KEYS.has(normalized)) {
+    return true;
+  }
+
+  return false;
 }
+

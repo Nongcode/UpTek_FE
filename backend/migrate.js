@@ -72,7 +72,93 @@ const pool = require('./src/database');
       $$;
     `);
 
+    // ─── GP3: manager_instances ───────────────────────────────────────────────
+    // Lưu danh sách manager instances (A, B, C...)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "manager_instances" (
+        "id"             VARCHAR(64) PRIMARY KEY,
+        "baseAgentKey"   VARCHAR(64) NOT NULL,
+        "label"          VARCHAR(255),
+        "status"         VARCHAR(32) NOT NULL DEFAULT 'active',
+        "config"         JSONB,
+        "createdAt"      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        "updatedAt"      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    // ─── GP3: manager_worker_bindings ─────────────────────────────────────────
+    // Mapping manager instance → worker agent IDs
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "manager_worker_bindings" (
+        "id"                VARCHAR(64) PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        "managerInstanceId" VARCHAR(64) NOT NULL REFERENCES "manager_instances"("id") ON DELETE CASCADE,
+        "workerAgentId"     VARCHAR(64) NOT NULL,
+        "role"              VARCHAR(64) NOT NULL DEFAULT 'worker',
+        "createdAt"         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE ("managerInstanceId", "workerAgentId")
+      );
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS "idx_mwb_manager_instance"
+        ON "manager_worker_bindings" ("managerInstanceId")
+    `);
+
+    // ─── GP3: thêm managerInstanceId vào Conversations ───────────────────────
+    // DEFAULT 'mgr_pho_phong_A' → dữ liệu cũ tự nhận instance mặc định
+    await pool.query(`
+      ALTER TABLE "Conversations"
+        ADD COLUMN IF NOT EXISTS "managerInstanceId" VARCHAR(64) DEFAULT 'mgr_pho_phong_A'
+    `);
+
+    // ─── GP3: thêm managerInstanceId vào Messages ────────────────────────────
+    await pool.query(`
+      ALTER TABLE "Messages"
+        ADD COLUMN IF NOT EXISTS "managerInstanceId" VARCHAR(64) DEFAULT 'mgr_pho_phong_A'
+    `);
+
+    // ─── GP3: index để query nhanh theo managerInstanceId ────────────────────
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS "idx_conversations_manager_instance"
+        ON "Conversations" ("managerInstanceId")
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS "idx_messages_manager_instance"
+        ON "Messages" ("managerInstanceId")
+    `);
+
+    // ─── GP3: Seed manager instances ─────────────────────────────────────────
+    // mgr_pho_phong_A: instance production mặc định
+    await pool.query(`
+      INSERT INTO "manager_instances" ("id", "baseAgentKey", "label", "status")
+      VALUES ('mgr_pho_phong_A', 'pho_phong', 'Phó Phòng A (Production)', 'active')
+      ON CONFLICT ("id") DO NOTHING
+    `);
+    // mgr_pho_phong_B: instance experimental dùng để test
+    await pool.query(`
+      INSERT INTO "manager_instances" ("id", "baseAgentKey", "label", "status")
+      VALUES ('mgr_pho_phong_B', 'pho_phong', 'Phó Phòng B (Experimental)', 'experimental')
+      ON CONFLICT ("id") DO NOTHING
+    `);
+
+    // ─── GP3: Seed worker bindings ────────────────────────────────────────────
+    // Cả A và B cùng share 3 workers (shared workers, context được truyền qua payload)
+    const workerAgents = ['nv_content', 'nv_media', 'nv_prompt'];
+    const managerIds = ['mgr_pho_phong_A', 'mgr_pho_phong_B'];
+    for (const mgrId of managerIds) {
+      for (const workerId of workerAgents) {
+        await pool.query(`
+          INSERT INTO "manager_worker_bindings" ("managerInstanceId", "workerAgentId", "role")
+          VALUES ($1, $2, 'worker')
+          ON CONFLICT ("managerInstanceId", "workerAgentId") DO NOTHING
+        `, [mgrId, workerId]);
+      }
+    }
+
     console.log('Migration completed successfully');
+    console.log('GP3: manager_instances and manager_worker_bindings tables created.');
+    console.log('GP3: managerInstanceId column added to Conversations and Messages.');
+    console.log('GP3: Seeded mgr_pho_phong_A (active) and mgr_pho_phong_B (experimental).');
   } catch(e) {
     console.error('Migration error:', e.message);
     process.exit(1);
