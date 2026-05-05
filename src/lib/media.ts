@@ -46,6 +46,11 @@ export function resolveMediaUrl(value?: string | null): string | null {
     return null;
   }
 
+
+  if (raw.startsWith("/storage/")) {
+    return `/backend-storage${raw.slice("/storage".length)}`;
+  }
+
   if (raw.startsWith("/api/media/")) {
     return `${BACKEND_BASE}${raw.slice("/api".length)}`;
   }

@@ -1,3 +1,4 @@
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -8,36 +9,41 @@ const pool = require('./database');
 const mediaConfig = require('./config/media');
 const createMediaLegacyRoutes = require('./routes/mediaLegacyRoutes');
 const mediaRoutes = require('./routes/mediaRoutes');
+
 const {
   buildLoginResponse,
   buildRefreshResponse,
   canAccessConversation,
   canAccessEmployeeId,
   requireBackendAuth,
-} = require('./auth');
+
+} = require("./auth");
 const {
-  buildCanonicalAutomationConversationId,
-  buildConversationBroadcastPayload,
-  buildConversationSessionKey,
-  buildMessageBroadcastPayload,
-  buildWorkflowBroadcastPayload,
-  hydrateConversationRecord,
-  inferConversationLane,
-  normalizeConversationLane,
-  normalizeConversationRole,
-  normalizeMessageContent,
-  sanitizeMessageRole,
-  sanitizeMessageType,
-} = require('./chat-consistency');
-const { injectAutomationMessage } = require('./gateway-sync');
+  ACTIVE_STATUS,
+  DISABLED_STATUS,
+  canManageUsers,
+  deleteUser,
+  initializeUserStore,
+  listUsers,
+  updateUserStatus,
+} = require("./user-management");
+const { injectAutomationMessage } = require("./gateway-sync");
+const {
+  DEFAULT_MANAGER_INSTANCE_ID,
+  getWorkersForManager,
+  listManagerInstances,
+  validateManagerInstanceId,
+} = require("./manager-instances");
+const { resolveManagerForConversation } = require("./manager-router");
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: `${mediaConfig.jsonBodyLimitMb}mb` }));
+app.use(express.json({ limit: `${Math.ceil(mediaConfig.maxUploadSizeMb * 1.5)}mb` }));
+
 const automationSyncToken = process.env.AUTOMATION_SYNC_TOKEN || "";
 
 function normalizeAgentId(value) {
-  const normalized = String(value || '').trim().toLowerCase();
+  const normalized = String(value || "").trim().toLowerCase();
   if (!normalized) {
     return undefined;
   }
@@ -57,6 +63,7 @@ function resolveAccessibleAutomationAgents(auth) {
 }
 
 function isAutomationConversation(conversation) {
+
   return inferConversationLane(conversation) === 'automation';
 }
 
@@ -207,25 +214,26 @@ function requireInternalAuth(req, res, next) {
     return res.status(401).json({ error: 'Unauthorized internal request' });
   }
   next();
+
 }
 
-// Log every request for easier debugging.
 app.use((req, res, next) => {
   console.log(`[${new Date().toLocaleTimeString()}] ${req.method} ${req.url}`);
   next();
 });
 
-// Clean up orphaned messages at startup.
 (async () => {
   try {
+    await initializeUserStore();
     const result = await pool.query('DELETE FROM "Messages" WHERE "conversationId" IS NULL');
     if (result.rowCount > 0) {
       console.log(`Deleted ${result.rowCount} orphaned messages.`);
     }
   } catch (err) {
-    console.error('Failed to clean up Messages:', err.message);
+    console.error("Startup initialization failed:", err.message);
   }
 })();
+
 
 function normalizePreviewPath(value) {
   return path.resolve(String(value || '')).replace(/\\/g, '/').replace(/\/+$/g, '').toLowerCase();
@@ -269,37 +277,69 @@ app.use(createMediaLegacyRoutes({ automationSyncToken }));
 app.use(mediaRoutes);
 
 app.post('/api/auth/login', async (req, res) => {
+
   const { email, password } = req.body || {};
-  const result = buildLoginResponse(email, password);
+  const result = await buildLoginResponse(email, password);
   if (!result) {
     return res.status(401).json({
-      error: { message: 'Invalid email or password', type: 'unauthorized' },
+      error: { message: "Invalid email or password", type: "unauthorized" },
     });
+  }
+  if (result.ok === false) {
+    return res.status(403).json({ error: result.error });
   }
   return res.json(result);
 });
 
-app.post('/api/auth/refresh', async (req, res) => {
-  const { token, employeeId, employeeName } = req.body || {};
-  const result = buildRefreshResponse({ token, employeeId, employeeName });
-  if (!result) {
-    return res.status(401).json({
-      error: { message: 'Unable to refresh backend session', type: 'unauthorized' },
-    });
+
+app.get("/api/users", requireBackendAuth, async (req, res) => {
+  if (!canManageUsers(req.auth)) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  try {
+    const users = await listUsers();
+    return res.json({ users, stats: buildUserStats(users) });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/users/:id/status", requireBackendAuth, async (req, res) => {
+  try {
+    const nextStatus = req.body?.status === DISABLED_STATUS ? DISABLED_STATUS : ACTIVE_STATUS;
+    const user = await updateUserStatus(req.params.id, nextStatus, req.auth);
+    return res.json({ success: true, user });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/users/:id", requireBackendAuth, async (req, res) => {
+  try {
+    await deleteUser(req.params.id, req.auth);
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ error: err.message });
+
   }
   return res.json(result);
 });
 
-app.get('/api/conversations/:employeeId', requireBackendAuth, async (req, res) => {
+app.get("/api/conversations/:employeeId", requireBackendAuth, async (req, res) => {
   const { employeeId } = req.params;
-  const includeAutomation = req.query.includeAutomation === '1' || req.query.includeAutomation === 'true';
+  const includeAutomation = req.query.includeAutomation === "1" || req.query.includeAutomation === "true";
+  const requestedManagerInstanceId =
+    typeof req.query?.managerInstanceId === "string" && req.query.managerInstanceId.trim()
+      ? req.query.managerInstanceId.trim()
+      : undefined;
   if (!canAccessEmployeeId(req.auth, employeeId)) {
-    return res.status(403).json({ error: 'Forbidden' });
+    return res.status(403).json({ error: "Forbidden" });
   }
   try {
     const convResult = await pool.query(
       'SELECT * FROM "Conversations" WHERE "employeeId" = $1 ORDER BY "updatedAt" DESC',
-      [employeeId]
+      [employeeId],
     );
 
     let convRows = convResult.rows;
@@ -315,8 +355,12 @@ app.get('/api/conversations/:employeeId', requireBackendAuth, async (req, res) =
         const autoResult = await pool.query(
           `SELECT *
            FROM "Conversations"
-           WHERE "lane" = 'automation'
-           ORDER BY "updatedAt" DESC`
+
+           WHERE "sessionKey" LIKE 'automation:%'
+              OR "id" LIKE 'auto_%'
+              OR "title" LIKE '[AUTO]%'
+           ORDER BY "updatedAt" DESC`,
+
         );
         autoRows = autoResult.rows;
       } else if (isOwnScope) {
@@ -331,7 +375,7 @@ app.get('/api/conversations/:employeeId', requireBackendAuth, async (req, res) =
              )
                AND "lane" = 'automation'
              ORDER BY "updatedAt" DESC`,
-            [accessibleAgentIds]
+            [accessibleAgentIds],
           );
           autoRows = autoResult.rows;
         }
@@ -345,7 +389,7 @@ app.get('/api/conversations/:employeeId', requireBackendAuth, async (req, res) =
            )
              AND "lane" = 'automation'
            ORDER BY "updatedAt" DESC`,
-          [requestedAgentId]
+          [requestedAgentId],
         );
         autoRows = autoResult.rows;
       }
@@ -368,11 +412,13 @@ app.get('/api/conversations/:employeeId', requireBackendAuth, async (req, res) =
     }
 
     const convIds = convRows.map((conversation) => conversation.id);
-    const placeholders = convIds.map((_, index) => `$${index + 1}`).join(',');
+    const placeholders = convIds.map((_, index) => `$${index + 1}`).join(",");
 
     const msgResult = await pool.query(
-      `SELECT * FROM "Messages" WHERE "conversationId" IN (${placeholders}) ORDER BY "timestamp" ASC, "id" ASC`,
-      convIds
+
+      `SELECT * FROM "Messages" WHERE "conversationId" IN (${placeholders}) ORDER BY "timestamp" ASC`,
+      convIds,
+
     );
     const msgRows = msgResult.rows;
 
@@ -381,6 +427,11 @@ app.get('/api/conversations/:employeeId', requireBackendAuth, async (req, res) =
         ...hydrateConversationRecord(conversation),
         messages: msgRows.filter((message) => message.conversationId === conversation.id),
       }))
+      .filter((conversation) =>
+        requestedManagerInstanceId
+          ? conversation.managerInstanceId === requestedManagerInstanceId
+          : true,
+      )
       .filter((conversation) => canAccessConversation(req.auth, conversation));
 
     return res.json(result);
@@ -390,9 +441,9 @@ app.get('/api/conversations/:employeeId', requireBackendAuth, async (req, res) =
   }
 });
 
-app.get('/api/conversations-global', requireBackendAuth, async (req, res) => {
+app.get("/api/conversations-global", requireBackendAuth, async (req, res) => {
   if (!req.auth?.canViewAllSessions) {
-    return res.status(403).json({ error: 'Forbidden' });
+    return res.status(403).json({ error: "Forbidden" });
   }
   try {
     const convResult = await pool.query('SELECT * FROM "Conversations" ORDER BY "updatedAt" DESC');
@@ -402,301 +453,82 @@ app.get('/api/conversations-global', requireBackendAuth, async (req, res) => {
   }
 });
 
-app.post('/api/conversations', requireBackendAuth, async (req, res) => {
-    const { title, agentId, lane = 'user', workflowId, employeeId: bodyEmployeeId } = req.body || {};
-    const employeeId = req.auth?.employeeId || bodyEmployeeId;
-    if (!normalizeAgentId(agentId)) {
-      return res.status(400).json({ error: 'Valid agentId is required' });
-    }
 
-    const normalizedLane = normalizeConversationLane(lane, workflowId);
-    const id = generateConversationId();
-    const effectiveWorkflowId =
-      normalizedLane === 'automation'
-        ? normalizeMessageContent(workflowId) || `wf_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
-        : null;
-    const now = Date.now();
-    const sessionKey = buildConversationSessionKey(agentId, id, normalizedLane, effectiveWorkflowId);
-    const convTitle = title || (normalizedLane === 'automation' ? 'Luong tu dong moi' : 'Cuoc tro chuyen moi');
-    const role = normalizeConversationRole('root', normalizedLane, null);
-
-    const requestedConversation = {
-      id,
-      title: convTitle,
+app.post("/api/conversations", requireBackendAuth, async (req, res) => {
+  const { id, title, agentId, sessionKey, projectId, status, createdAt, updatedAt, employeeId, managerInstanceId: reqManagerInstanceId } = req.body;
+  const requestedConversation = { id, title, agentId, sessionKey, employeeId, managerInstanceId: reqManagerInstanceId };
+  if (!canAccessConversation(req.auth, requestedConversation)) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  try {
+    // GP3: resolve managerInstanceId — nếu không truyền thì dùng router để chọn
+    const resolvedManagerInstanceId = await resolveManagerForConversation({
+      managerInstanceId: reqManagerInstanceId,
+      employeeId: req.auth?.employeeId,
       agentId,
-      sessionKey,
-      employeeId,
-      lane: normalizedLane,
-      role,
-      workflowId: effectiveWorkflowId,
-      parentConversationId: null,
-    };
-    if (!canAccessConversation(req.auth, requestedConversation)) {
-      return res.status(403).json({ error: 'Forbidden' });
-    }
+    });
 
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const insertedConversation = (
-        await client.query(
-          `INSERT INTO "Conversations"
-           ("id","title","agentId","sessionKey","status","createdAt","updatedAt","employeeId","lane","role","workflowId","parentConversationId")
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-           RETURNING *`,
-          [id, convTitle, agentId, sessionKey, 'active', now, now, employeeId, normalizedLane, role, effectiveWorkflowId, null]
-        )
-      ).rows[0];
-
-      let workflowRecord = null;
-      if (normalizedLane === 'automation' && effectiveWorkflowId) {
-        workflowRecord = (
-          await client.query(
-            `INSERT INTO "Workflows" ("id","rootConversationId","initiatorAgentId","initiatorEmployeeId","status","title","createdAt","updatedAt")
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-             ON CONFLICT ("id") DO UPDATE SET
-               "rootConversationId" = COALESCE("Workflows"."rootConversationId", EXCLUDED."rootConversationId"),
-               "updatedAt" = EXCLUDED."updatedAt"
-             RETURNING *`,
-            [effectiveWorkflowId, id, agentId, employeeId, 'active', convTitle, now, now]
-          )
-        ).rows[0];
-      }
-
-      await client.query('COMMIT');
-      if (workflowRecord) {
-        broadcastWorkflowCreated(workflowRecord);
-      }
-      broadcastConversationCreated(insertedConversation);
-      return res.json({
-        ...hydrateConversationRecord(insertedConversation),
-        messages: [],
-      });
-    } catch (err) {
-      await client.query('ROLLBACK');
-      return res.status(500).json({ error: err.message });
-    } finally {
-      client.release();
-    }
+    await pool.query(
+      `INSERT INTO "Conversations" ("id", "title", "agentId", "sessionKey", "projectId", "status", "createdAt", "updatedAt", "employeeId", "managerInstanceId")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT ("id")
+       DO UPDATE SET
+         "title" = COALESCE(EXCLUDED."title", "Conversations"."title"),
+         "agentId" = COALESCE(EXCLUDED."agentId", "Conversations"."agentId"),
+         "sessionKey" = COALESCE(EXCLUDED."sessionKey", "Conversations"."sessionKey"),
+         "projectId" = COALESCE(EXCLUDED."projectId", "Conversations"."projectId"),
+         "status" = COALESCE(EXCLUDED."status", "Conversations"."status"),
+         "updatedAt" = COALESCE(EXCLUDED."updatedAt", "Conversations"."updatedAt"),
+         "employeeId" = COALESCE(EXCLUDED."employeeId", "Conversations"."employeeId")`,
+      // managerInstanceId KHÔNG update khi conflict: giữ cố định sau lần tạo đầu
+      [id, title, agentId, sessionKey, projectId, status, createdAt, updatedAt, employeeId, resolvedManagerInstanceId],
+    );
+    return res.json({ success: true, id, managerInstanceId: resolvedManagerInstanceId });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
-app.put('/api/conversations/:id', requireBackendAuth, async (req, res) => {
-    const { id } = req.params;
-    const { title, status, updatedAt } = req.body || {};
-    try {
-      const existing = await pool.query('SELECT * FROM "Conversations" WHERE "id" = $1 LIMIT 1', [id]);
-      const conversation = existing.rows[0];
-      if (!conversation) {
-        return res.status(404).json({ error: 'Conversation not found' });
-      }
-      if (!canAccessConversation(req.auth, conversation)) {
-        return res.status(403).json({ error: 'Forbidden' });
-      }
-
-      const patchedConversation = (
-        await pool.query(
-          `UPDATE "Conversations"
-           SET "title" = COALESCE($1, "title"),
-               "status" = COALESCE($2, "status"),
-               "updatedAt" = COALESCE($3, "updatedAt")
-           WHERE "id" = $4
-           RETURNING *`,
-          [title, status, updatedAt || Date.now(), id]
-        )
-      ).rows[0];
-
-      broadcastConversationUpdated(patchedConversation);
-      return res.json({ success: true, conversation: hydrateConversationRecord(patchedConversation) });
-    } catch (err) {
-      return res.status(500).json({ error: err.message });
+app.put("/api/conversations/:id", requireBackendAuth, async (req, res) => {
+  const { id } = req.params;
+  const { title, status, updatedAt } = req.body;
+  try {
+    const existing = await pool.query('SELECT * FROM "Conversations" WHERE "id" = $1 LIMIT 1', [id]);
+    const conversation = existing.rows[0];
+    if (!conversation) {
+      return res.status(404).json({ error: "Conversation not found" });
     }
+    if (!canAccessConversation(req.auth, conversation)) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    await pool.query(
+      `UPDATE "Conversations"
+       SET "title" = COALESCE($1, "title"),
+           "status" = COALESCE($2, "status"),
+           "updatedAt" = COALESCE($3, "updatedAt")
+       WHERE "id" = $4`,
+      [title, status, updatedAt, id],
+    );
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
-app.post('/api/messages', requireBackendAuth, async (req, res) => {
-    const { messages } = req.body || {};
-    if (!Array.isArray(messages) || messages.length === 0) {
-      return res.json({ success: true });
-    }
+app.post("/api/messages", requireBackendAuth, async (req, res) => {
+  const { messages } = req.body;
+  if (!messages || !messages.length) {
+    return res.json({ success: true });
+  }
 
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const persistedMessages = [];
-      const conversationsById = {};
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const message of messages) {
+      const conversationResult = await client.query(
+        'SELECT * FROM "Conversations" WHERE "id" = $1 LIMIT 1',
+        [message.conversationId],
 
-      for (const message of messages) {
-        const conversationResult = await client.query(
-          'SELECT * FROM "Conversations" WHERE "id" = $1 LIMIT 1',
-          [message.conversationId]
-        );
-        const conversation = conversationResult.rows[0];
-        if (!conversation) {
-          throw new Error(`Conversation not found for message ${message.id}`);
-        }
-        if (!canAccessConversation(req.auth, conversation)) {
-          await client.query('ROLLBACK');
-          return res.status(403).json({ error: 'Forbidden' });
-        }
-
-        const validation = validateMessagePayload(message, conversation);
-        if (!validation.ok) {
-          throw new Error(validation.error);
-        }
-
-        const insertedMessage = (
-          await client.query(
-            `INSERT INTO "Messages" ("id", "conversationId", "role", "type", "content", "timestamp")
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT ("id") DO UPDATE SET
-               "role" = EXCLUDED."role",
-               "type" = EXCLUDED."type",
-               "content" = EXCLUDED."content",
-               "timestamp" = EXCLUDED."timestamp"
-             RETURNING *`,
-            [message.id, message.conversationId, validation.role, validation.type, validation.content, validation.timestamp]
-          )
-        ).rows[0];
-        persistedMessages.push(insertedMessage);
-        conversationsById[message.conversationId] = validation.conversation;
-      }
-
-      for (const conversationId of Object.keys(conversationsById)) {
-        const updatedConversation = (
-          await client.query(
-            `UPDATE "Conversations"
-             SET "updatedAt" = $1
-             WHERE "id" = $2
-             RETURNING *`,
-            [Date.now(), conversationId]
-          )
-        ).rows[0];
-        conversationsById[conversationId] = hydrateConversationRecord(updatedConversation || conversationsById[conversationId]);
-      }
-
-      await client.query('COMMIT');
-      for (const conversationId of Object.keys(conversationsById)) {
-        broadcastConversationUpdated(conversationsById[conversationId]);
-      }
-      broadcastMessageEvent(persistedMessages, conversationsById);
-      return res.json({ success: true });
-    } catch (err) {
-      await client.query('ROLLBACK');
-      return res.status(500).json({ error: err.message });
-    } finally {
-      client.release();
-    }
-});
-
-app.post('/api/automation/agent-event', async (req, res) => {
-    if (automationSyncToken) {
-      const incomingToken = req.get('x-automation-sync-token') || '';
-      if (incomingToken !== automationSyncToken) {
-        return res.status(401).json({ error: 'Unauthorized automation sync token' });
-      }
-    }
-
-    const {
-      workflowId,
-      employeeId = 'pho_phong',
-      agentId = 'pho_phong',
-      title,
-      role = 'assistant',
-      type = 'regular',
-      content,
-      timestamp = Date.now(),
-      eventId,
-      conversationId: requestedConversationId,
-      conversationRole,
-      parentConversationId,
-      sessionKey: requestedSessionKey,
-      status,
-      injectToGateway = true,
-    } = req.body || {};
-
-    if (!normalizeMessageContent(workflowId) || !normalizeMessageContent(content)) {
-      return res.status(400).json({ error: 'workflowId and content are required' });
-    }
-
-    const safeRole = sanitizeMessageRole(role);
-    const safeType = sanitizeMessageType(type);
-    if (!safeRole || !safeType) {
-      return res.status(400).json({ error: 'Invalid role or type' });
-    }
-
-    const normalizedWorkflowId = normalizeMessageContent(workflowId);
-    const normalizedParentConversationId = normalizeMessageContent(parentConversationId) || null;
-    const normalizedConversationRole = normalizeConversationRole(conversationRole || 'root', 'automation', normalizedParentConversationId);
-    const safeTimestamp = Number(timestamp) || Date.now();
-    const normalizedStatus =
-      status
-        ? normalizeWorkflowConversationStatus(status)
-        : safeType === 'approval_request'
-          ? 'pending_approval'
-          : 'active';
-    const messageId = eventId || `auto_msg_${normalizedWorkflowId}_${safeTimestamp}_${safeRole}_${safeType}`;
-
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-
-      let shouldInjectToGateway = false;
-      let conversationWasCreated = false;
-      let conversationRecord = null;
-
-      if (normalizeMessageContent(requestedConversationId)) {
-        conversationRecord = (
-          await client.query(
-            'SELECT * FROM "Conversations" WHERE "id" = $1 LIMIT 1',
-            [requestedConversationId]
-          )
-        ).rows[0] || null;
-      }
-
-      if (!conversationRecord && normalizeMessageContent(requestedSessionKey)) {
-        conversationRecord = (
-          await client.query(
-            'SELECT * FROM "Conversations" WHERE "sessionKey" = $1 LIMIT 1',
-            [requestedSessionKey]
-          )
-        ).rows[0] || null;
-      }
-
-      if (!conversationRecord) {
-        conversationRecord = (
-          await client.query(
-            `SELECT *
-             FROM "Conversations"
-             WHERE "workflowId" = $1
-               AND "agentId" = $2
-               AND COALESCE("role", 'root') = $3
-               AND COALESCE("parentConversationId", '') = COALESCE($4, '')
-             ORDER BY "updatedAt" DESC
-             LIMIT 1`,
-            [normalizedWorkflowId, agentId, normalizedConversationRole, normalizedParentConversationId]
-          )
-        ).rows[0] || null;
-      }
-
-      const finalConversationId =
-        conversationRecord?.id
-        || normalizeMessageContent(requestedConversationId)
-        || buildCanonicalAutomationConversationId({
-          workflowId: normalizedWorkflowId,
-          agentId,
-          conversationRole: normalizedConversationRole,
-          parentConversationId: normalizedParentConversationId,
-        });
-      const finalSessionKey =
-        normalizeMessageContent(requestedSessionKey)
-        || conversationRecord?.sessionKey
-        || buildConversationSessionKey(agentId, finalConversationId, 'automation', normalizedWorkflowId);
-      const finalEmployeeId = conversationRecord?.employeeId || employeeId;
-      const conversationTitle = title || `[AUTO] ${agentId} - ${normalizedWorkflowId}`;
-      const hadConversationRecord = Boolean(conversationRecord);
-
-      const messageExists = await client.query(
-        'SELECT 1 FROM "Messages" WHERE "id" = $1 LIMIT 1',
-        [messageId]
       );
       shouldInjectToGateway = messageExists.rows.length === 0;
 
@@ -819,105 +651,79 @@ app.delete('/api/conversations/:id', requireBackendAuth, async (req, res) => {
         return res.status(404).json({ error: 'Conversation not found' });
       }
       if (!canAccessConversation(req.auth, conversation)) {
-        await client.query('ROLLBACK');
-        return res.status(403).json({ error: 'Forbidden' });
+        await client.query("ROLLBACK");
+        return res.status(403).json({ error: "Forbidden" });
       }
-      await client.query('DELETE FROM "Messages" WHERE "conversationId" = $1', [id]);
-      await client.query('DELETE FROM "Conversations" WHERE "id" = $1', [id]);
-      await client.query('COMMIT');
-      broadcastConversationDeleted(conversation);
-      return res.json({ success: true });
-    } catch (err) {
-      await client.query('ROLLBACK');
-      return res.status(500).json({ error: err.message });
-    } finally {
-      client.release();
+
+      await client.query(
+        `INSERT INTO "Messages" ("id", "conversationId", "role", "type", "content", "timestamp", "managerInstanceId")
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT ("id") DO UPDATE SET "content" = EXCLUDED."content"`,
+        [
+          message.id,
+          message.conversationId,
+          message.role,
+          message.type,
+          message.content,
+          message.timestamp,
+          conversation.managerInstanceId || message.managerInstanceId || req.auth?.managerInstanceId || null,
+        ],
+      );
     }
+    await client.query("COMMIT");
+    return res.json({ success: true });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    return res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
 });
 
-const PORT = Number(process.env.PORT) || 3001;
+app.post("/api/automation/agent-event", async (req, res) => {
+  if (automationSyncToken) {
+    const incomingToken = req.get("x-automation-sync-token") || "";
+    if (incomingToken !== automationSyncToken) {
+      return res.status(401).json({ error: "Unauthorized automation sync token" });
 
-// ===================== INTERNAL API (Commit 5) =====================
-// Orchestrator gọi các routes này để persist sub-agent conversations/messages.
-// Xác thực bằng AUTOMATION_SYNC_TOKEN.
-
-app.post('/internal/workflows/resolve-root', requireInternalAuth, async (req, res) => {
-    const {
-      agentId,
-      employeeId,
-      brief,
-      sessionKey,
-      rootConversationId,
-    } = req.body || {};
-
-    const normalizedAgentId = normalizeMessageContent(agentId);
-    const normalizedEmployeeId = normalizeMessageContent(employeeId) || normalizedAgentId;
-    const normalizedBrief = normalizeMessageContent(brief);
-    const normalizedSessionKey = normalizeMessageContent(sessionKey);
-    const normalizedRootConversationId = normalizeMessageContent(rootConversationId);
-
-    if (!normalizedAgentId) {
-      return res.status(400).json({ error: 'agentId is required' });
     }
 
-    try {
-      let rootConversation = null;
 
-      if (normalizedRootConversationId) {
-        rootConversation = (
-          await pool.query(
-            `SELECT *
-             FROM "Conversations"
-             WHERE "id" = $1
-               AND "lane" = 'automation'
-               AND COALESCE("role", 'root') = 'root'
-             LIMIT 1`,
-            [normalizedRootConversationId]
-          )
-        ).rows[0] || null;
-      }
+  const {
+    workflowId,
+    // GP3: employeeId/agentId vẫn giữ default "pho_phong" để backward-compatible
+    // nhưng managerInstanceId giờ là trường chính xác định luồng
+    employeeId = "pho_phong",
+    agentId = "pho_phong",
+    title,
+    role = "assistant",
+    type = "regular",
+    content,
+    timestamp = Date.now(),
+    eventId,
+    // GP3: managerInstanceId xác định instance cụ thể (A, B, C...)
+    // Worker phải truyền field này khi gửi result về manager
+    managerInstanceId: reqManagerInstanceId,
+    // GP3: workerAgentId xác định worker nào đang gửi result (để tránh nhầm context)
+    workerAgentId,
+  } = req.body || {};
 
-      if (normalizedSessionKey) {
-        rootConversation = (
-          await pool.query(
-            `SELECT *
-             FROM "Conversations"
-             WHERE "sessionKey" = $1
-               AND "lane" = 'automation'
-               AND COALESCE("role", 'root') = 'root'
-             LIMIT 1`,
-            [normalizedSessionKey]
-          )
-        ).rows[0] || null;
-      }
+  if (!workflowId || !content) {
+    return res.status(400).json({ error: "workflowId and content are required" });
+  }
 
-      if (!rootConversation && normalizedBrief) {
-        const rootMatches = (
-          await pool.query(
-            `SELECT c.*
-             FROM "Conversations" c
-             JOIN LATERAL (
-               SELECT m."content", m."timestamp"
-               FROM "Messages" m
-               WHERE m."conversationId" = c."id"
-                 AND m."role" = 'user'
-               ORDER BY m."timestamp" DESC
-               LIMIT 1
-             ) latest_user ON TRUE
-             WHERE c."lane" = 'automation'
-               AND COALESCE(c."role", 'root') = 'root'
-               AND c."agentId" = $1
-               AND ($2 = '' OR c."employeeId" = $2)
-               AND latest_user."content" = $3
-             ORDER BY latest_user."timestamp" DESC, c."updatedAt" DESC
-             LIMIT 2`,
-            [normalizedAgentId, normalizedEmployeeId || '', normalizedBrief]
-          )
-        ).rows;
-        if (rootMatches.length === 1) {
-          rootConversation = rootMatches[0];
-        }
-      }
+  // GP3: resolve managerInstanceId — nếu không truyền thì fallback về default
+  // Không validate strict ở đây để không break luồng cũ (backward-compatible)
+  const resolvedManagerInstanceId = reqManagerInstanceId || DEFAULT_MANAGER_INSTANCE_ID;
+
+  const safeTimestamp = Number(timestamp) || Date.now();
+  const sessionKey = `automation:${agentId}:${workflowId}`;
+  const canonicalConversationId = `auto_${employeeId}_${workflowId}`;
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
 
       if (!rootConversation) {
         return res.json({
@@ -929,18 +735,12 @@ app.post('/internal/workflows/resolve-root', requireInternalAuth, async (req, re
         });
       }
 
-      const hydratedRoot = hydrateConversationRecord(rootConversation);
-      return res.json({
-        success: true,
-        rootConversation: hydratedRoot,
-        workflowId: hydratedRoot?.workflowId || null,
-        rootConversationId: hydratedRoot?.id || null,
-        sessionKey: hydratedRoot?.sessionKey || null,
-      });
-    } catch (err) {
-      return res.status(500).json({ error: err.message });
-    }
-});
+
+    const existingResult = await client.query(
+      'SELECT "id", "employeeId" FROM "Conversations" WHERE "sessionKey" = $1 LIMIT 1',
+      [sessionKey],
+    );
+
 
 // 1. Tạo workflow
 app.post('/internal/workflows', requireInternalAuth, async (req, res) => {
@@ -1046,7 +846,13 @@ app.post('/internal/conversations', requireInternalAuth, async (req, res) => {
          LEFT JOIN "Conversations" c ON c."id" = w."rootConversationId"
          WHERE w."id" = $1
          LIMIT 1`,
-        [workflowId]
+
+        [
+          agentId,
+          `automation:${agentId}:conv_%`,
+          `automation:${agentId}:${employeeId}:conv_%`,
+        ],
+
       );
       const workflowRow = workflowResult.rows[0];
       if (!resolvedParentConversationId) {
@@ -1134,24 +940,12 @@ app.post('/internal/conversations', requireInternalAuth, async (req, res) => {
     }
 });
 
-// 3. Persist messages từ orchestrator/sub-agent
-app.post('/internal/messages', requireInternalAuth, async (req, res) => {
-    const { messages } = req.body || {};
-    if (!Array.isArray(messages) || messages.length === 0) {
-      return res.json({ success: true });
-    }
 
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const persistedMessages = [];
-      const conversationsById = {};
-      const completedInternalConversationIds = new Set();
+        await client.query('DELETE FROM "Conversations" WHERE "id" = $1', [conversationId]);
+        await client.query(
+          'UPDATE "Messages" SET "conversationId" = $1 WHERE "conversationId" = $2',
+          [conversationId, draftConversationId],
 
-      for (const message of messages) {
-        const conversationResult = await client.query(
-          'SELECT * FROM "Conversations" WHERE "id" = $1 LIMIT 1',
-          [message.conversationId]
         );
         const conversation = conversationResult.rows[0];
         const validation = validateMessagePayload(message, conversation);
@@ -1179,81 +973,67 @@ app.post('/internal/messages', requireInternalAuth, async (req, res) => {
         }
       }
 
-      for (const conversationId of Object.keys(conversationsById)) {
-        const updatedConversation = (
-          await client.query(
-            `UPDATE "Conversations"
-             SET "updatedAt" = $1,
-                 "status" = CASE
-                   WHEN $3::boolean
-                     AND COALESCE("lane", 'user') = 'automation'
-                     AND COALESCE("role", 'root') = 'sub_agent'
-                     AND COALESCE("status", 'active') NOT IN ('cancelled', 'stopped', 'error')
-                   THEN 'approved'
-                   ELSE "status"
-                 END
-             WHERE "id" = $2
-             RETURNING *`,
-            [Date.now(), conversationId, completedInternalConversationIds.has(conversationId)]
-          )
-        ).rows[0];
-        conversationsById[conversationId] = hydrateConversationRecord(updatedConversation || conversationsById[conversationId]);
-      }
 
-      await client.query('COMMIT');
-      for (const conversationId of Object.keys(conversationsById)) {
-        broadcastConversationUpdated(conversationsById[conversationId]);
-      }
-      broadcastMessageEvent(persistedMessages, conversationsById);
-      return res.json({ success: true });
-    } catch (err) {
-      await client.query('ROLLBACK');
-      return res.status(500).json({ error: err.message });
-    } finally {
-      client.release();
-    }
-});
+    const messageId = eventId || `auto_msg_${workflowId}_${safeTimestamp}_${role}_${type}`;
+    const conversationTitle = title || `[AUTO] ${agentId} • ${workflowId}`;
+    const nextStatus = type === "approval_request" ? "pending_approval" : "active";
 
-// 4. Update workflow status
-app.patch('/internal/workflows/:id/status', requireInternalAuth, async (req, res) => {
-    const { status } = req.body || {};
-    if (!status) return res.status(400).json({ error: 'status is required' });
-    const now = Date.now();
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const workflowRecord = (
-        await client.query(
-          `UPDATE "Workflows"
-           SET "status" = $1, "updatedAt" = $2
-           WHERE "id" = $3
-           RETURNING *`,
-          [status, now, req.params.id]
-        )
-      ).rows[0];
+    const existingMessageResult = await client.query(
+      'SELECT 1 FROM "Messages" WHERE "id" = $1 LIMIT 1',
+      [messageId],
+    );
+    shouldInjectToGateway = existingMessageResult.rows.length === 0;
 
-      if (!workflowRecord) {
-        await client.query('ROLLBACK');
-        return res.status(404).json({ error: 'Workflow not found' });
-      }
+    // GP3: lưu managerInstanceId vào Conversations — giữ cố định sau lần tạo đầu
+    await client.query(
+      `INSERT INTO "Conversations" ("id", "title", "agentId", "sessionKey", "projectId", "status", "createdAt", "updatedAt", "employeeId", "managerInstanceId")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT ("id")
+       DO UPDATE SET
+         "updatedAt" = EXCLUDED."updatedAt",
+         "status" = CASE
+           WHEN "Conversations"."status" IN ('cancelled', 'stopped') THEN "Conversations"."status"
+           ELSE EXCLUDED."status"
+         END,
+         "title" = EXCLUDED."title",
+         "sessionKey" = EXCLUDED."sessionKey",
+         "employeeId" = COALESCE("Conversations"."employeeId", EXCLUDED."employeeId")`,
+      // managerInstanceId KHÔNG update khi conflict: giữ cố định sau lần tạo đầu
+      [
+        conversationId,
+        conversationTitle,
+        agentId,
+        sessionKey,
+        null,
+        nextStatus,
+        safeTimestamp,
+        safeTimestamp,
+        finalEmployeeId,
+        resolvedManagerInstanceId,
+      ],
+    );
 
-      let rootConversation = null;
-      if (workflowRecord.rootConversationId) {
-        rootConversation = (
-          await client.query(
-            `UPDATE "Conversations"
-             SET "status" = $1, "updatedAt" = $2
-             WHERE "id" = $3
-             RETURNING *`,
-            [normalizeWorkflowConversationStatus(status), now, workflowRecord.rootConversationId]
-          )
-        ).rows[0];
-      }
+    // GP3: lưu managerInstanceId vào Messages để worker result không bị nhầm context
+    await client.query(
+      `INSERT INTO "Messages" ("id", "conversationId", "role", "type", "content", "timestamp", "managerInstanceId")
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT ("id") DO UPDATE SET "content" = EXCLUDED."content", "timestamp" = EXCLUDED."timestamp"`,
+      [messageId, conversationId, role, type, String(content).slice(0, 4000), safeTimestamp, resolvedManagerInstanceId],
+    );
 
-      await client.query('COMMIT');
-      broadcastWorkflowUpdated(workflowRecord);
-      if (rootConversation) {
-        broadcastConversationUpdated(rootConversation);
+    await client.query("COMMIT");
+
+    if (shouldInjectToGateway) {
+      try {
+        await injectAutomationMessage({
+          sessionKey,
+          content: String(content).slice(0, 4000),
+          eventId: messageId,
+          label: agentId,
+        });
+      } catch (syncError) {
+        console.error("Failed to sync automation message to gateway transcript:", syncError.message);
+
       }
       return res.json({ success: true });
     } catch (err) {
@@ -1264,126 +1044,106 @@ app.patch('/internal/workflows/:id/status', requireInternalAuth, async (req, res
     }
 });
 
-// ===================== SSE — Realtime events (Phase 3) =====================
-// Clients connect to GET /api/events và nhận các event: workflow.*, conversation.*, message.*
-// Mỗi event là text/event-stream theo chuẩn Server-Sent Events.
 
-app.post('/internal/workflows/:id/progress', requireInternalAuth, async (req, res) => {
-  const { workflowId, conversationId, agentId, stage, label, status } = req.body || {};
-  const targetWorkflowId = normalizeMessageContent(workflowId) || req.params.id;
-  const normalizedStage = normalizeMessageContent(stage);
-  if (!targetWorkflowId || !normalizedStage) {
-    return res.status(400).json({ error: 'workflowId/stage is required' });
+    // GP3: response bao gồm managerInstanceId + workerAgentId để caller trace đúng context
+    return res.json({
+      success: true,
+      conversationId,
+      messageId,
+      managerInstanceId: resolvedManagerInstanceId,
+      workerAgentId: workerAgentId || null,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    return res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+
   }
 
-  const now = Date.now();
++
+// ─── GP3: Manager Instance API endpoints ─────────────────────────────────────
+
+/** List tất cả manager instances (chỉ admin/giam_doc) */
+app.get("/api/manager-instances", requireBackendAuth, async (req, res) => {
+  if (!req.auth?.canViewAllSessions) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  try {
+    const instances = await listManagerInstances();
+    return res.json({ instances });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/** Lấy danh sách workers của một manager instance */
+app.get("/api/manager-instances/:id/workers", requireBackendAuth, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { valid, reason } = await validateManagerInstanceId(id);
+    if (!valid) {
+      return res.status(404).json({ error: reason });
+    }
+    const workers = await getWorkersForManager(id);
+    return res.json({ managerInstanceId: id, workers });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/conversations/:id", requireBackendAuth, async (req, res) => {
+  const { id } = req.params;
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    const workflowRecord = (
-      await client.query(
-        `UPDATE "Workflows"
-         SET "updatedAt" = $1,
-             "status" = COALESCE($2, "status")
-         WHERE "id" = $3
-         RETURNING *`,
-        [now, status || null, targetWorkflowId]
-      )
-    ).rows[0] || null;
+    await client.query("BEGIN");
+    const existing = await client.query('SELECT * FROM "Conversations" WHERE "id" = $1 LIMIT 1', [id]);
+    const conversation = existing.rows[0];
+    if (!conversation) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Conversation not found" });
+    }
+    if (!canAccessConversation(req.auth, conversation)) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    await client.query('DELETE FROM "Messages" WHERE "conversationId" = $1', [id]);
+    await client.query('DELETE FROM "Conversations" WHERE "id" = $1', [id]);
+    await client.query("COMMIT");
 
-    let conversationRecord = null;
-    if (normalizeMessageContent(conversationId)) {
-      conversationRecord = (
-        await client.query(
-          `UPDATE "Conversations"
-           SET "updatedAt" = $1
-           WHERE "id" = $2
-           RETURNING *`,
-          [now, conversationId]
-        )
-      ).rows[0] || null;
-    }
-
-    await client.query('COMMIT');
-    if (workflowRecord) {
-      broadcastWorkflowUpdated(workflowRecord);
-    }
-    if (conversationRecord) {
-      broadcastConversationUpdated(conversationRecord);
-    }
-    safeBroadcastSSE('workflow.progress', {
-      workflowId: targetWorkflowId,
-      conversationId: normalizeMessageContent(conversationId) || null,
-      agentId: normalizeMessageContent(agentId) || null,
-      stage: normalizedStage,
-      label: normalizeMessageContent(label) || normalizedStage,
-      status: normalizeMessageContent(status) || workflowRecord?.status || 'active',
-      timestamp: now,
-    });
     return res.json({ success: true });
   } catch (err) {
-    await client.query('ROLLBACK');
+    await client.query("ROLLBACK");
     return res.status(500).json({ error: err.message });
   } finally {
     client.release();
   }
 });
 
-const sseClients = new Set();
-
-function broadcastSSE(eventName, data) {
-  const payload = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
-  for (const res of sseClients) {
-    try { res.write(payload); } catch { /* client da dong */ }
-  }
-}
-
-app.locals.broadcastSSE = broadcastSSE;
-
-app.get('/api/events', requireBackendAuth, (req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no');
-  res.flushHeaders();
-  res.write(`event: realtime.snapshot\ndata: ${JSON.stringify({
-    timestamp: Date.now(),
-    employeeId: req.auth?.employeeId || null,
-  })}\n\n`);
-
-  const heartbeat = setInterval(() => {
-    try { res.write(': heartbeat\\n\\n'); } catch { clearInterval(heartbeat); }
-  }, 25000);
-
-  sseClients.add(res);
-
-  req.on('close', () => {
-    clearInterval(heartbeat);
-    sseClients.delete(res);
-  });
-});
 
 app.use((err, req, res, next) => {
-  if (err?.type === 'entity.too.large') {
-    return res.status(413).json({
-      error: `Request body too large. Max JSON body size is ${mediaConfig.jsonBodyLimitMb} MB. Max decoded upload size is ${mediaConfig.maxUploadSizeMb} MB`,
-    });
+  if (err?.type === "entity.too.large") {
+    return res.status(413).json({ error: `Request body too large. Max upload size is ${mediaConfig.maxUploadSizeMb} MB` });
   }
-  if (err instanceof SyntaxError && 'body' in err) {
-    return res.status(400).json({ error: 'Invalid JSON request body' });
+  if (err instanceof SyntaxError && "body" in err) {
+    return res.status(400).json({ error: "Invalid JSON request body" });
+
   }
   return next(err);
 });
 
+
+const PORT = 3001;
 void pool.checkConnection()
   .then(() => {
-    console.log('Connected successfully to PostgreSQL Database.');
+    console.log("Connected successfully to PostgreSQL Database.");
   })
   .catch((err) => {
-    console.error('Could not connect to PostgreSQL. Check DATABASE_URL.', err.stack || err.message || err);
+    console.error("Could not connect to PostgreSQL. Check DATABASE_URL.", err.stack || err.message || err);
   });
 
-const server = app.listen(PORT, () => {
+app.listen(PORT, () => {
+
   console.log(`Backend Server is running on http://localhost:${PORT}`);
 });
 

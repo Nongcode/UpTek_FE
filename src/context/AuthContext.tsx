@@ -56,6 +56,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     accessPolicy: null,
     employeeName: null,
     employeeId: null,
+    managerInstanceId: null,
   });
   const [bootstrapConfig, setBootstrapConfig] = useState<BootstrapConfig | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -260,6 +261,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         accessPolicy: result.accessPolicy || null,
         employeeName: result.accessPolicy?.employeeName || email.split("@")[0],
         employeeId: result.accessPolicy?.employeeId || email.split("@")[0],
+        managerInstanceId: result.accessPolicy?.managerInstanceId || null,
       };
       setAuth(newAuth);
       saveAuthToStorage(newAuth);
@@ -281,6 +283,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       accessPolicy: null,
       employeeName: null,
       employeeId: null,
+      managerInstanceId: null,
     });
     clearAuthFromStorage();
   }, []);

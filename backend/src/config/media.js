@@ -31,7 +31,9 @@ function normalizeBaseUrl(value) {
   return String(value || '').trim().replace(/\/+$/, '');
 }
 
+
 const maxUploadSizeMb = parsePositiveInteger(process.env.MEDIA_MAX_UPLOAD_SIZE_MB, 10);
+
 
 const mediaConfig = {
   // Storage driver is local today; future PRs can switch based on this value.
@@ -41,6 +43,7 @@ const mediaConfig = {
   // Public base is used only for public media URLs; private/internal media stay behind read routes.
   publicBaseUrl: normalizeBaseUrl(process.env.MEDIA_PUBLIC_BASE_URL),
   privateUrlTtlSeconds: parsePositiveInteger(process.env.MEDIA_PRIVATE_URL_TTL_SECONDS, 300),
+
   maxUploadSizeMb,
   // Agent gallery sync sends images as base64 JSON, which is larger than the decoded image.
   // Keep this separate from the real file size limit so manual uploads stay unchanged.
@@ -48,6 +51,7 @@ const mediaConfig = {
     process.env.MEDIA_JSON_BODY_LIMIT_MB,
     Math.max(25, Math.ceil(maxUploadSizeMb * 2)),
   ),
+
   allowedImageMime: parseCsv(
     process.env.MEDIA_ALLOWED_IMAGE_MIME,
     'image/jpeg,image/png,image/webp,image/gif',

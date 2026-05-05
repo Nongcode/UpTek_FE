@@ -307,7 +307,9 @@ export default function Home() {
             <button
               className="new-chat-icon-button"
               onClick={onCreateConversation}
+
               disabled={createInFlight}
+
               title="Tạo mới"
               style={{ visibility: appMode === "chat" ? "visible" : "hidden" }}
             >

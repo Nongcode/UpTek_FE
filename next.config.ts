@@ -4,6 +4,7 @@ const backendOrigin = process.env.BACKEND_ORIGIN || process.env.NEXT_PUBLIC_BACK
 
 const nextConfig: NextConfig = {
   async rewrites() {
+
     return {
       beforeFiles: [
         {
@@ -24,6 +25,7 @@ const nextConfig: NextConfig = {
         },
       ],
     };
+
   },
 };
 

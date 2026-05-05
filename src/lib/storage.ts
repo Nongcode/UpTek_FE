@@ -1,8 +1,10 @@
 import { Conversation, Message, Project } from "./types";
+
 import { buildBackendApiUrl } from "./runtimeUrls";
 import { notifyBackendAuthExpired } from "./backendAuth";
 
 const STORAGE_PREFIX = "openclaw_chat_";
+
 
 type BackendAuth = {
   backendToken: string;
@@ -55,7 +57,7 @@ async function requestVoid(input: RequestInfo | URL, init?: RequestInit): Promis
 
 export async function loadConversations(
   employeeId: string,
-  options?: { includeAutomation?: boolean },
+  options?: { includeAutomation?: boolean; managerInstanceId?: string },
   auth?: BackendAuth,
 ): Promise<Conversation[]> {
   if (!auth?.backendToken) {
@@ -69,6 +71,7 @@ export async function loadConversations(
       headers: buildAuthHeaders(auth),
     },
   );
+
 }
 
 export async function saveConversations(
@@ -123,6 +126,39 @@ export async function apiDeleteConversation(id: string, auth: BackendAuth): Prom
   });
 }
 
+
+export function createConversation(
+  agentId: string,
+  projectId?: string,
+  lane: "user" | "automation" = "user",
+  ownerId?: string,
+  /** GP3: instance se xu ly conversation nay. Lock co dinh sau khi tao. */
+  managerInstanceId?: string,
+): Conversation {
+  const id = `conv_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  const ownerSegment = (ownerId || "anon").replace(/[^a-zA-Z0-9_-]/g, "_");
+  const managerSegment = (managerInstanceId || "").replace(/[^a-zA-Z0-9_-]/g, "_");
+  const sessionKey = lane === "automation"
+    ? managerSegment
+      ? `automation:${agentId}:${managerSegment}:${id}`
+      : `automation:${agentId}:${id}`
+    : `agent:${agentId}:${ownerSegment}:${id}`;
+
+  return {
+    id,
+    title: lane === "automation" ? "Luồng tự động mới" : "Cuộc trò chuyện mới",
+    messages: [],
+    lane,
+    agentId,
+    sessionKey,
+    projectId,
+    status: "active",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    // GP3: only send managerInstanceId when the caller has an explicit login scope.
+    ...(managerInstanceId !== undefined ? { managerInstanceId } : {}),
+  };
+}
 export function createMessage(
   role: "user" | "assistant" | "system" | "manager",
   content: string,

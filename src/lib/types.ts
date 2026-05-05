@@ -5,6 +5,8 @@ export interface Message {
   content: string;
   timestamp: number;
   conversationId?: string;
+  /** GP3: instance nào đã tạo/xử lý message này */
+  managerInstanceId?: string;
 }
 
 export interface Conversation {
@@ -22,6 +24,12 @@ export interface Conversation {
   employeeId?: string;
   createdAt: number;
   updatedAt: number;
+  /**
+   * GP3: ID của manager instance đã tạo conversation này.
+   * Cố định sau khi conversation được tạo — không thay đổi giữa chừng.
+   * Default: 'mgr_pho_phong_A'
+   */
+  managerInstanceId?: string;
 }
 
 export interface Project {
@@ -42,6 +50,7 @@ export interface Template {
 export interface AccessPolicy {
   employeeId?: string;
   employeeName?: string;
+  managerInstanceId?: string;
   lockedAgentId?: string;
   lockedSessionKey?: string;
   companyId?: string;
@@ -52,6 +61,8 @@ export interface AccessPolicy {
   lockSession?: boolean;
   autoConnect?: boolean;
   enforcedByServer?: boolean;
+  role?: string;
+  status?: string;
 }
 
 export interface DemoLoginAccount {
@@ -59,6 +70,7 @@ export interface DemoLoginAccount {
   label?: string;
   employeeId?: string;
   employeeName?: string;
+  managerInstanceId?: string;
   lockedAgentId?: string;
 }
 
@@ -91,4 +103,33 @@ export interface AuthState {
   accessPolicy: AccessPolicy | null;
   employeeName: string | null;
   employeeId: string | null;
+  managerInstanceId: string | null;
 }
+
+export interface SystemUser {
+  id: string;
+  email: string;
+  employeeId: string;
+  employeeName: string;
+  role: string;
+  status: "active" | "disabled";
+  lockedAgentId: string;
+  canViewAllSessions: boolean;
+  visibleAgentIds: string[];
+  createdAt: string;
+  updatedAt: string;
+  disabledAt?: string | null;
+}
+
+export interface UserStatsSummary {
+  total: number;
+  active: number;
+  disabled: number;
+  byRole: Record<string, number>;
+}
+
+export interface UsersResponse {
+  users: SystemUser[];
+  stats: UserStatsSummary;
+}
+

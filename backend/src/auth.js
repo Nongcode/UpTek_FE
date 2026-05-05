@@ -1,75 +1,14 @@
 require("dotenv").config();
 const crypto = require("crypto");
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
+const { loadOpenClawConfig } = require("./openclaw-config");
+const { buildUserAccessPolicy, getLoginAttemptResult } = require("./user-management");
+// GP3: import isManagerAgent để check agent type động, không hardcode
+const { isManagerAgent } = require("./manager-instances");
 
-const DEFAULT_CONFIG_PATH = process.env.OPENCLAW_CONFIG_PATH || path.join(os.homedir(), ".openclaw", "openclaw.json");
-const DEFAULT_CONFIG_BACKUP_PATH = `${DEFAULT_CONFIG_PATH}.bak`;
 const BACKEND_TOKEN_TTL_MS = Number(process.env.BACKEND_AUTH_TTL_MS || 12 * 60 * 60 * 1000);
-
-function readJsonIfExists(filePath) {
-  try {
-    if (!fs.existsSync(filePath)) {
-      return null;
-    }
-    const raw = fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "");
-    return JSON.parse(raw);
-  } catch (error) {
-    console.error(`Failed to read config ${filePath}:`, error.message);
-    return null;
-  }
-}
-
-function deepClone(value) {
-  return value == null ? value : JSON.parse(JSON.stringify(value));
-}
-
-function mergeControlUiConfig(primaryConfig, backupConfig) {
-  const merged = deepClone(primaryConfig || {}) || {};
-  const primaryGateway = merged.gateway || {};
-  const backupGateway = backupConfig?.gateway || {};
-  const primaryControlUi = primaryGateway.controlUi || {};
-  const backupControlUi = backupGateway.controlUi || {};
-
-  merged.gateway = {
-    ...backupGateway,
-    ...primaryGateway,
-    controlUi: {
-      ...backupControlUi,
-      ...primaryControlUi,
-      allowedOrigins: primaryControlUi.allowedOrigins || backupControlUi.allowedOrigins,
-      employeeDirectory:
-        Array.isArray(primaryControlUi.employeeDirectory) && primaryControlUi.employeeDirectory.length > 0
-          ? primaryControlUi.employeeDirectory
-          : (backupControlUi.employeeDirectory || []),
-      demoLogin:
-        primaryControlUi.demoLogin?.enabled
-          ? primaryControlUi.demoLogin
-          : backupControlUi.demoLogin,
-    },
-    auth: {
-      ...(backupGateway.auth || {}),
-      ...(primaryGateway.auth || {}),
-    },
-  };
-
-  return merged;
-}
-
-function loadOpenClawConfig() {
-  const primaryConfig = readJsonIfExists(DEFAULT_CONFIG_PATH);
-  const backupConfig = readJsonIfExists(DEFAULT_CONFIG_BACKUP_PATH);
-  return mergeControlUiConfig(primaryConfig, backupConfig);
-}
 
 function normalizeText(value) {
   const normalized = String(value || "").trim();
-  return normalized || undefined;
-}
-
-function normalizeEmail(value) {
-  const normalized = normalizeText(value)?.toLowerCase();
   return normalized || undefined;
 }
 
@@ -96,11 +35,16 @@ function resolveDefaultVisibilityForLockedAgent(lockedAgentId) {
     case "quan_ly":
       return { canViewAllSessions: true, visibleAgentIds: [] };
     case "truong_phong":
+      // truong_phong có thể thấy pho_phong và các workers (danh sách tĩnh cho fallback)
       return { canViewAllSessions: false, visibleAgentIds: ["truong_phong", "pho_phong", "nv_content", "nv_media"] };
-    case "pho_phong":
-      return { canViewAllSessions: false, visibleAgentIds: ["pho_phong", "nv_content", "nv_media", "nv_prompt"] };
-    default:
+    default: {
+      // GP3: không hardcode "pho_phong" nữa.
+      // Visibility cho manager agents (pho_phong, ...) giờ được xác định
+      // dựa vào base agent key trong manager_worker_bindings (resolve ở runtime).
+      // Hàm này chỉ trả fallback — thực tế visibility của manager agent
+      // sẽ được ghi đè khi buildUserAccessPolicy chạy từ DB (có visible_agent_ids).
       return { canViewAllSessions: false, visibleAgentIds: [lockedAgentId] };
+    }
   }
 }
 
@@ -122,6 +66,56 @@ function normalizeEmployeeKey(value) {
     .replace(/\s+/g, " ")
     .toLowerCase();
   return normalized || undefined;
+}
+
+function normalizeManagerInstanceId(value) {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return undefined;
+  }
+  return /^[a-z0-9][a-z0-9_.:-]{0,127}$/i.test(normalized) ? normalized : undefined;
+}
+
+function findDirectoryEntryForEmployee(config, employeeId, employeeName) {
+  const requestedId = normalizeEmployeeKey(employeeId);
+  const requestedName = normalizeEmployeeKey(employeeName);
+  const entries = config?.gateway?.controlUi?.employeeDirectory;
+
+  if (!Array.isArray(entries)) {
+    return undefined;
+  }
+
+  return entries.find((entry) => {
+    const aliases = Array.isArray(entry.aliases) ? entry.aliases : [];
+    const candidates = [
+      normalizeEmployeeKey(entry.employeeId),
+      normalizeEmployeeKey(entry.employeeName),
+      ...aliases.map(normalizeEmployeeKey),
+    ].filter(Boolean);
+
+    return (
+      (requestedId && candidates.includes(requestedId)) ||
+      (requestedName && candidates.includes(requestedName))
+    );
+  });
+}
+
+function resolveManagerInstanceIdForEmployee(config, employeeId, employeeName) {
+  const directoryManagerInstanceId = normalizeManagerInstanceId(
+    findDirectoryEntryForEmployee(config, employeeId, employeeName)?.managerInstanceId,
+  );
+  if (directoryManagerInstanceId) {
+    return directoryManagerInstanceId;
+  }
+
+  const normalizedEmployeeId = normalizeEmployeeKey(employeeId);
+  if (normalizedEmployeeId === "pho_phong_a") {
+    return "mgr_pho_phong_A";
+  }
+  if (normalizedEmployeeId === "pho_phong_b") {
+    return "mgr_pho_phong_B";
+  }
+  return undefined;
 }
 
 function resolveAccessPolicyForEmployee(config, employeeId, employeeName) {
@@ -152,7 +146,7 @@ function resolveAccessPolicyForEmployee(config, employeeId, employeeName) {
         const cId = "UpTek";
         let dId = "PhongMarketing";
         const empIdStr = normalizeText(entry.employeeId) || normalizeText(employeeId);
-        
+
         if (empIdStr === "admin") {
           dId = "All";
         } else if (empIdStr === "giam_doc" || empIdStr === "truong_phong" || empIdStr === "pho_phong_cskh") {
@@ -164,6 +158,7 @@ function resolveAccessPolicyForEmployee(config, employeeId, employeeName) {
         return {
           employeeId: empIdStr,
           employeeName: normalizeText(entry.employeeName) || normalizeText(employeeName),
+          managerInstanceId: normalizeManagerInstanceId(entry.managerInstanceId),
           lockedAgentId,
           lockedSessionKey: normalizeSessionKey(entry.lockedSessionKey) || `agent:${lockedAgentId}:main`,
           companyId: cId,
@@ -187,6 +182,7 @@ function resolveAccessPolicyForEmployee(config, employeeId, employeeName) {
   return {
     employeeId: normalizeText(employeeId),
     employeeName: normalizeText(employeeName),
+    managerInstanceId: undefined,
     companyId: normalizeText(employeeId),
     departmentId: normalizeText(employeeId),
     lockedAgentId: fallbackLockedAgentId,
@@ -198,21 +194,6 @@ function resolveAccessPolicyForEmployee(config, employeeId, employeeName) {
     autoConnect: false,
     enforcedByServer: false,
   };
-}
-
-function findDemoAccount(config, email, password) {
-  const requestedEmail = normalizeEmail(email);
-  const requestedPassword = normalizeText(password);
-  const accounts = config?.gateway?.controlUi?.demoLogin?.accounts;
-  if (!requestedEmail || !requestedPassword || !Array.isArray(accounts)) {
-    return null;
-  }
-
-  return (
-    accounts.find((entry) => {
-      return normalizeEmail(entry.email) === requestedEmail && normalizeText(entry.password) === requestedPassword;
-    }) || null
-  );
 }
 
 function base64urlEncode(input) {
@@ -236,11 +217,13 @@ function issueBackendToken(config, accessPolicy) {
   const payload = {
     employeeId: accessPolicy.employeeId || accessPolicy.lockedAgentId || "unknown",
     employeeName: accessPolicy.employeeName || null,
+    managerInstanceId: accessPolicy.managerInstanceId || null,
     companyId: accessPolicy.companyId || null,
     departmentId: accessPolicy.departmentId || null,
     lockedAgentId: accessPolicy.lockedAgentId || null,
     visibleAgentIds: accessPolicy.visibleAgentIds || [],
     canViewAllSessions: accessPolicy.canViewAllSessions === true,
+    role: accessPolicy.role || null,
     iat: now,
     exp: now + BACKEND_TOKEN_TTL_MS,
   };
@@ -290,7 +273,7 @@ function canAccessEmployeeId(auth, employeeId) {
     return false;
   }
   if (auth.canViewAllSessions) {
-    if (auth.employeeId === 'giam_doc' && (target === 'admin' || target === 'main')) {
+    if (auth.employeeId === "giam_doc" && (target === "admin" || target === "main")) {
       return false;
     }
     return true;
@@ -317,12 +300,21 @@ function canAccessConversation(auth, conversationLike) {
   }
   const empId = normalizeText(conversationLike.employeeId);
   const aId = resolveConversationAgentId(conversationLike);
+  const conversationManagerInstanceId = normalizeManagerInstanceId(conversationLike.managerInstanceId);
+  const authManagerInstanceId = normalizeManagerInstanceId(auth.managerInstanceId);
 
   if (auth.canViewAllSessions) {
-    if (auth.employeeId === 'giam_doc' && (empId === 'admin' || empId === 'main' || aId === 'main')) {
+    if (auth.employeeId === "giam_doc" && (empId === "admin" || empId === "main" || aId === "main")) {
       return false;
     }
     return true;
+  }
+  if (
+    authManagerInstanceId &&
+    conversationManagerInstanceId &&
+    authManagerInstanceId !== conversationManagerInstanceId
+  ) {
+    return false;
   }
   const employeeId = normalizeText(conversationLike.employeeId);
   if (employeeId && canAccessEmployeeId(auth, employeeId)) {
@@ -335,14 +327,38 @@ function canAccessConversation(auth, conversationLike) {
   return resolveAllowedAgentIds(auth).includes(agentId);
 }
 
-function buildLoginResponse(email, password) {
+async function buildLoginResponse(email, password) {
   const config = loadOpenClawConfig();
-  const matchedAccount = findDemoAccount(config, email, password);
-  if (!matchedAccount) {
+  const loginAttempt = await getLoginAttemptResult(email, password);
+  if (!loginAttempt.ok) {
+    if (loginAttempt.reason === "blocked") {
+      return {
+        ok: false,
+        error: {
+          message: "Tài khoản của bạn đã bị chặn truy cập hệ thống",
+          type: "account_blocked",
+        },
+      };
+    }
     return null;
   }
 
-  const accessPolicy = resolveAccessPolicyForEmployee(config, matchedAccount.employeeId, matchedAccount.employeeName);
+  const matchedUser = loginAttempt.user;
+  const accessPolicyBase =
+    buildUserAccessPolicy(matchedUser) ||
+    resolveAccessPolicyForEmployee(config, matchedUser.employeeId, matchedUser.employeeName);
+  const resolvedManagerInstanceId = resolveManagerInstanceIdForEmployee(
+    config,
+    matchedUser.employeeId,
+    matchedUser.employeeName,
+  );
+  const accessPolicy =
+    accessPolicyBase && !accessPolicyBase.managerInstanceId && resolvedManagerInstanceId
+      ? {
+          ...accessPolicyBase,
+          managerInstanceId: resolvedManagerInstanceId,
+        }
+      : accessPolicyBase;
   if (!accessPolicy) {
     return null;
   }
@@ -398,7 +414,9 @@ function requireBackendAuth(req, res, next) {
 
 function optionalBackendAuth(req, res, next) {
   const config = loadOpenClawConfig();
-  const queryToken = typeof req.query?.token === 'string' ? req.query.token : '';
+
+  const queryToken = typeof req.query?.token === "string" ? req.query.token : "";
+
   const token = extractBearerToken(req) || queryToken;
   const payload = token ? verifyBackendToken(config, token) : null;
   if (payload) {

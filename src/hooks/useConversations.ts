@@ -94,8 +94,29 @@ function isTechnicalAutomationTitle(title: string | undefined): boolean {
   );
 }
 
-function resolveConversationRole(conversation: Conversation): "root" | "sub_agent" {
-  return conversation.role || (conversation.parentConversationId ? "sub_agent" : "root");
+
+function resolveSessionBoxTitle(
+  group: Conversation[],
+  mergedMessages: Message[],
+  representative: Conversation,
+  latestConversation: Conversation,
+): string {
+  const preferredConversationTitle = group.find(
+    (conversation) => !isTechnicalAutomationTitle(conversation.title),
+  )?.title;
+  if (preferredConversationTitle) {
+    return preferredConversationTitle;
+  }
+
+  const firstHumanMessage = mergedMessages.find(
+    (message) => message.role === "user" || message.role === "manager",
+  );
+  if (firstHumanMessage) {
+    return generateConversationTitle([firstHumanMessage]);
+  }
+
+  return representative.title || latestConversation.title || "Luồng tự động";
+
 }
 
 function buildWorkflowConversationGroups(
@@ -235,11 +256,10 @@ export function useConversations({
   const streamingStoreRef = useRef<StreamingStore | null>(null);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const targetLoadId = resolveConversationLoadTarget({
-    chatLane,
-    employeeId,
-    viewingAgentId,
-  });
+
+  const isViewingSubordinate = viewingAgentId !== "" && viewingAgentId !== employeeId;
+  const targetLoadId = isViewingSubordinate ? viewingAgentId : employeeId;
+  const managerInstanceId = accessPolicy?.managerInstanceId;
   const shouldFetch = Boolean(targetLoadId && backendToken);
 
   const updateStreamState = (conversationId: string, updater: StreamState | ((previous: StreamState | null) => StreamState | null)) => {
@@ -379,7 +399,7 @@ export function useConversations({
   }, [chatLane, enablePolling, sseStatus, streamStates]);
 
   const swrKey = shouldFetch
-    ? `conversations:${targetLoadId}:${canUseAutomationLane ? "all" : "user"}`
+    ? `conversations:${targetLoadId}:${managerInstanceId || "default"}:${canUseAutomationLane ? "all" : "user"}`
     : null;
 
   const { data: conversations = [], mutate } = useSWR<Conversation[]>(
@@ -387,7 +407,7 @@ export function useConversations({
     async () => {
       const remoteConversations = (await loadConversations(
         targetLoadId as string,
-        { includeAutomation: canUseAutomationLane },
+        { includeAutomation: canUseAutomationLane, managerInstanceId },
         { backendToken: backendToken as string },
       )).map(normalizeConversationRecord);
 
@@ -852,6 +872,7 @@ export function useConversations({
     attempt = 0,
   ): Promise<void> => {
     try {
+
       await persistConversationUpdate(conversationId, updates, [assistantMessage]);
       clearPendingMessage(conversationId, assistantMessage.id);
       cleanupStreaming(conversationId, assistantMessage.id, "completed");
@@ -876,6 +897,7 @@ export function useConversations({
       setTimeout(() => {
         void retryPersistAssistantMessage(conversationId, assistantMessage, updates, attempt + 1);
       }, 1500 * (attempt + 1));
+
     }
   };
 
@@ -951,11 +973,29 @@ export function useConversations({
       }),
     );
 
+
     await retryPersistAssistantMessage(
       conversationId,
       assistantMessage,
       nextStatus !== normalizedConversation.status ? { status: nextStatus, updatedAt } : { updatedAt },
     );
+    try {
+      await persistConversationUpdate(
+        conversationId,
+        nextStatus !== currentConversation.status ? { status: nextStatus, updatedAt } : {},
+        [
+          {
+            id: messageId,
+            role: "assistant",
+            content: finalContent,
+            timestamp: updatedAt,
+          },
+        ],
+      );
+    } catch {
+      toast.error("KhÃƒÂ´ng thÃ¡Â»Æ’ lÃ†Â°u phÃ¡ÂºÂ£n hÃ¡Â»â€œi cÃ¡Â»Â§a AI. Vui lÃƒÂ²ng tÃ¡ÂºÂ£i lÃ¡ÂºÂ¡i hÃ¡Â»â„¢i thoÃ¡ÂºÂ¡i.");
+    }
+
   };
 
   const handleNewConversation = async () => {
@@ -965,17 +1005,33 @@ export function useConversations({
 
     const laneForConversation: ChatLane =
       canUseAutomationLane && chatLane === "automation" ? "automation" : "user";
-    const activeConversation = conversationsRef.current.find((conversation) => conversation.id === activeIdRef.current) || null;
-    if (shouldReuseDraftConversation(activeConversation, laneForConversation, viewingAgentId)) {
-      setActiveId(activeConversation?.id || null);
+
+
+    const nextConversation = createConversation(
+      viewingAgentId,
+      undefined,
+      laneForNewConversation,
+      targetLoadId || undefined,
+      managerInstanceId,
+    );
+    nextConversation.employeeId = targetLoadId || undefined;
+    nextConversation.managerInstanceId = managerInstanceId || nextConversation.managerInstanceId;
+
+    await applyConversations([nextConversation, ...previousConversations]);
+    setActiveId(nextConversation.id);
+
+    if (!backendToken) {
       return;
     }
 
     try {
       await createConversationIfNeeded(true);
     } catch {
-      toast.error("Khong the tao cuoc tro chuyen moi.");
-      setTransientError("Khong the tao cuoc tro chuyen moi.");
+
+      await applyConversations(previousConversations);
+      setActiveId(previousActiveId);
+      toast.error("LÃ¡Â»â€”i kÃ¡ÂºÂ¿t nÃ¡Â»â€˜i, khÃƒÂ´ng thÃ¡Â»Æ’ tÃ¡ÂºÂ¡o hÃ¡Â»â„¢i thoÃ¡ÂºÂ¡i mÃ¡Â»â€ºi.");
+
     }
   };
 
@@ -1002,8 +1058,10 @@ export function useConversations({
     } catch {
       await applyConversations(previousConversations);
       setActiveId(previousActiveId);
+      
       toast.error("Khong the xoa cuoc tro chuyen.");
       setTransientError("Khong the xoa cuoc tro chuyen.");
+
     }
   };
 
@@ -1018,15 +1076,27 @@ export function useConversations({
     const laneForConversation: ChatLane =
       canUseAutomationLane && chatLane === "automation" ? "automation" : "user";
 
-    try {
-      let conversation = snapshotBeforeSend.find((item) => item.id === activeIdRef.current) || null;
-      if (!conversation) {
-        conversation = await createConversationIfNeeded();
-        if (!conversation) {
-          toast.error("Khong the tao cuoc tro chuyen.");
-          return;
-        }
-      }
+
+    if (!conversation) {
+      conversation = createConversation(
+        viewingAgentId,
+        undefined,
+        laneForConversation,
+        targetLoadId || undefined,
+        managerInstanceId,
+      );
+      conversation.employeeId = targetLoadId || undefined;
+      conversation.managerInstanceId = managerInstanceId || conversation.managerInstanceId;
+    }
+
+    const conversationId = conversation.id;
+    const conversationManagerInstanceId = conversation.managerInstanceId || managerInstanceId;
+    const newMessage = createMessage(
+      options?.type === "manager_note" ? "manager" : "user",
+      content,
+      options?.type,
+    );
+
 
       if (!conversation.id || !conversation.agentId || !conversation.sessionKey) {
         setTransientError("Cuoc tro chuyen hien tai thieu agentId hoac sessionKey.");
@@ -1034,32 +1104,30 @@ export function useConversations({
         return;
       }
 
-      const userMessage = createMessage(
-        options?.type === "manager_note" ? "manager" : "user",
-        content,
-        options?.type,
-      );
-      const requestedCancellation =
-        laneForConversation === "automation" && detectAutomationCancellationIntent(content);
-      const latestInputTimestamp = userMessage.timestamp;
-      markPendingMessage(conversation.id, userMessage.id);
+    const updatedMessages = [...conversation.messages, { ...newMessage, conversationId }];
+    const scopedMessages = updatedMessages.map((message) => ({
+      ...message,
+      managerInstanceId: message.managerInstanceId || conversationManagerInstanceId,
+    }));
+    const nextTitle = conversation.messages.length === 0
+      ? generateConversationTitle(updatedMessages)
+      : conversation.title;
+    const nextStatus = requestedCancellation
+      ? "cancelled"
+      : laneForConversation === "automation"
+        ? "active"
+        : conversation.status;
+    const updatedAt = Date.now();
 
-      updateStreamState(conversation.id, {
-        conversationId: conversation.id,
-        messageId: "",
-        phase: "saving_user_message",
-        startedAt: Date.now(),
-        lastActivityAt: Date.now(),
-        firstTokenAt: null,
-        latestInputTimestamp,
-        errorMessage: null,
-      });
+    const nextConversation: Conversation = {
+      ...conversation,
+      title: nextTitle,
+      messages: scopedMessages,
+      managerInstanceId: conversationManagerInstanceId,
+      status: nextStatus,
+      updatedAt,
+    };
 
-      const nextTitle =
-        conversation.messages.length === 0 ? generateConversationTitle([...conversation.messages, userMessage]) : conversation.title;
-      const updatedAt = Date.now();
-      const nextStatus =
-        requestedCancellation ? "cancelled" : normalizeConversationRecord(conversation).lane === "automation" ? "active" : conversation.status;
 
       const optimisticConversation: Conversation = {
         ...conversation,
@@ -1086,17 +1154,20 @@ export function useConversations({
             [userMessage],
           );
         }
-      } catch {
-        clearPendingMessage(conversation.id, userMessage.id);
-        await applyConversations(snapshotBeforeSend);
-        setActiveId(previousActiveId);
-        updateStreamState(conversation.id, (previous) =>
-          previous ? { ...previous, phase: "transport_error", errorMessage: "User message save failed" } : previous,
+
+
+        await persistConversationUpdate(
+          conversationId,
+          { title: nextTitle, status: nextStatus, updatedAt, managerInstanceId: conversationManagerInstanceId },
+          [{ ...newMessage, managerInstanceId: conversationManagerInstanceId }],
         );
-        toast.error("Khong the luu yeu cau cua ban.");
-        setTransientError("Khong the luu yeu cau cua ban.");
-        return;
       }
+    } catch {
+      await applyConversations(snapshotBeforeSend);
+      setActiveId(previousActiveId);
+      toast.error("LÃ¡Â»â€”i kÃ¡ÂºÂ¿t nÃ¡Â»â€˜i, khÃƒÂ´ng thÃ¡Â»Æ’ gÃ¡Â»Â­i tin nhÃ¡ÂºÂ¯n.");
+      return;
+    }
 
       const assistantMessageId = `msg_${Date.now()}_ai`;
       const streamRequestId = `stream_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -1249,6 +1320,7 @@ export function useConversations({
       const message = getRequestErrorMessage(error, "Khong the gui yeu cau luc nay.");
       toast.error(message);
       setTransientError(message);
+
     }
   };
 
