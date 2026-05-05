@@ -32,6 +32,8 @@ export default function Home() {
   const [chatLane, setChatLane] = useState<ChatLane>("user");
   const [viewingAgentId, setViewingAgentId] = useState("");
   const [showAgentDropdown, setShowAgentDropdown] = useState(false);
+  const [showPersonalChatModal, setShowPersonalChatModal] = useState(false);
+  const [showAutomationChatModal, setShowAutomationChatModal] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const canUseAutomationLane = canAccessAutomationLane(employeeId, accessPolicy);
@@ -262,14 +264,26 @@ export default function Home() {
           <div className="header-modes-nav">
             <button
               className={`mode-btn ${chatLane === "user" && appMode === "chat" ? "active" : ""}`}
-              onClick={() => { setAppMode("chat"); setChatLane("user"); }}
+              onClick={() => {
+                if (chatLane !== "user" || appMode !== "chat") {
+                  setShowPersonalChatModal(true);
+                }
+                setAppMode("chat");
+                setChatLane("user");
+              }}
             >
               Chat cá nhân
             </button>
             {canUseAutomationLane && (
               <button
                 className={`mode-btn ${chatLane === "automation" && appMode === "chat" ? "active" : ""}`}
-                onClick={() => { setAppMode("chat"); setChatLane("automation"); }}
+                onClick={() => {
+                  if (chatLane !== "automation" || appMode !== "chat") {
+                    setShowAutomationChatModal(true);
+                  }
+                  setAppMode("chat");
+                  setChatLane("automation");
+                }}
               >
                 Luồng tự động
               </button>
@@ -277,12 +291,12 @@ export default function Home() {
           </div>
 
           <div className="header-spacer" />
- 
+
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
             <ThemeToggle />
-            <button 
-              className="new-chat-icon-button" 
-              onClick={onCreateConversation} 
+            <button
+              className="new-chat-icon-button"
+              onClick={onCreateConversation}
               title="Tạo mới"
               style={{ visibility: appMode === "chat" ? "visible" : "hidden" }}
             >
@@ -327,6 +341,102 @@ export default function Home() {
           <DashboardArea backendToken={backendToken} />
         )}
       </main>
+
+      {showPersonalChatModal && (
+        <div style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 9999,
+          background: "rgba(0, 0, 0, 0.6)",
+          backdropFilter: "blur(4px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "20px"
+        }}>
+          <div style={{
+            background: "var(--bg-panel)",
+            border: "1px solid var(--border-color)",
+            borderRadius: "16px",
+            padding: "32px",
+            maxWidth: "500px",
+            width: "100%",
+            boxShadow: "0 24px 60px rgba(0, 0, 0, 0.3)"
+          }}>
+            <h3 style={{ margin: "0 0 16px 0", color: "var(--text-primary)", fontSize: "1.35rem", fontWeight: 700 }}>Thông báo</h3>
+            <p style={{ color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: "28px", fontSize: "1.05rem" }}>
+              Tab chat cá nhân chỉ sử dụng với các yêu cầu cá nhân, không chạy quy trình tự động.
+            </p>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button
+                onClick={() => setShowPersonalChatModal(false)}
+                style={{
+                  background: "var(--accent-primary)",
+                  color: "#fff",
+                  border: "none",
+                  padding: "10px 20px",
+                  borderRadius: "10px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  transition: "opacity 0.2s"
+                }}
+                onMouseOver={(e) => e.currentTarget.style.opacity = "0.9"}
+                onMouseOut={(e) => e.currentTarget.style.opacity = "1"}
+              >
+                Tôi đã hiểu
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAutomationChatModal && (
+        <div style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 9999,
+          background: "rgba(0, 0, 0, 0.6)",
+          backdropFilter: "blur(4px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "20px"
+        }}>
+          <div style={{
+            background: "var(--bg-panel)",
+            border: "1px solid var(--border-color)",
+            borderRadius: "16px",
+            padding: "32px",
+            maxWidth: "540px",
+            width: "100%",
+            boxShadow: "0 24px 60px rgba(0, 0, 0, 0.3)"
+          }}>
+            <h3 style={{ margin: "0 0 16px 0", color: "var(--text-primary)", fontSize: "1.35rem", fontWeight: 700 }}>Thông báo</h3>
+            <p style={{ color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: "28px", fontSize: "1.05rem" }}>
+              Tab chat luồng tự động chỉ phục vụ các quy trình tự động. Khi đã bắt đầu 1 luồng tự động thì không can thiệp vào quá trình chạy luồng ngoại trừ lúc agent yêu cầu duyệt. Nếu có yêu cầu riêng vui lòng chat tại tab chat cá nhân.
+            </p>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button
+                onClick={() => setShowAutomationChatModal(false)}
+                style={{
+                  background: "var(--accent-primary)",
+                  color: "#fff",
+                  border: "none",
+                  padding: "10px 20px",
+                  borderRadius: "10px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  transition: "opacity 0.2s"
+                }}
+                onMouseOver={(e) => e.currentTarget.style.opacity = "0.9"}
+                onMouseOut={(e) => e.currentTarget.style.opacity = "1"}
+              >
+                Tôi đã hiểu
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

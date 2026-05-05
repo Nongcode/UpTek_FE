@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
@@ -91,7 +91,7 @@ function resolveSessionBoxTitle(
     return generateConversationTitle([firstHumanMessage]);
   }
 
-  return representative.title || latestConversation.title || "Luồng tự động";
+  return representative.title || latestConversation.title || "Luá»“ng tá»± Ä‘á»™ng";
 }
 
 function buildSessionBoxConversations(
@@ -196,6 +196,7 @@ export function useConversations({
 
   const isViewingSubordinate = viewingAgentId !== "" && viewingAgentId !== employeeId;
   const targetLoadId = isViewingSubordinate ? viewingAgentId : employeeId;
+  const managerInstanceId = accessPolicy?.managerInstanceId;
   const shouldFetch = Boolean(targetLoadId && backendToken);
   const refreshInterval = enablePolling && streamingConvIds.size === 0 ? 10000 : 0;
 
@@ -235,7 +236,7 @@ export function useConversations({
   }
 
   const swrKey = shouldFetch
-    ? `conversations:${targetLoadId}:${canUseAutomationLane ? "all" : "user"}`
+    ? `conversations:${targetLoadId}:${managerInstanceId || "default"}:${canUseAutomationLane ? "all" : "user"}`
     : null;
 
   const { data: conversations = [], mutate } = useSWR<Conversation[]>(
@@ -243,7 +244,7 @@ export function useConversations({
     async () => {
       const loaded = await loadConversations(
         targetLoadId as string,
-        { includeAutomation: canUseAutomationLane },
+        { includeAutomation: canUseAutomationLane, managerInstanceId },
         { backendToken: backendToken as string },
       );
       return loaded.map(hydrateConversationLane);
@@ -404,7 +405,7 @@ export function useConversations({
     try {
       await apiUpdateConversation(conversationId, { status, updatedAt }, { backendToken });
     } catch {
-      toast.error("KhÃ´ng thá»ƒ Ä‘á»“ng bá»™ tráº¡ng thÃ¡i há»™i thoáº¡i.");
+      toast.error("KhÃƒÂ´ng thÃ¡Â»Æ’ Ã„â€˜Ã¡Â»â€œng bÃ¡Â»â„¢ trÃ¡ÂºÂ¡ng thÃƒÂ¡i hÃ¡Â»â„¢i thoÃ¡ÂºÂ¡i.");
     }
   };
 
@@ -478,7 +479,7 @@ export function useConversations({
         ],
       );
     } catch {
-      toast.error("KhÃ´ng thá»ƒ lÆ°u pháº£n há»“i cá»§a AI. Vui lÃ²ng táº£i láº¡i há»™i thoáº¡i.");
+      toast.error("KhÃƒÂ´ng thÃ¡Â»Æ’ lÃ†Â°u phÃ¡ÂºÂ£n hÃ¡Â»â€œi cÃ¡Â»Â§a AI. Vui lÃƒÂ²ng tÃ¡ÂºÂ£i lÃ¡ÂºÂ¡i hÃ¡Â»â„¢i thoÃ¡ÂºÂ¡i.");
     }
   };
 
@@ -497,8 +498,10 @@ export function useConversations({
       undefined,
       laneForNewConversation,
       targetLoadId || undefined,
+      managerInstanceId,
     );
     nextConversation.employeeId = targetLoadId || undefined;
+    nextConversation.managerInstanceId = managerInstanceId || nextConversation.managerInstanceId;
 
     await applyConversations([nextConversation, ...previousConversations]);
     setActiveId(nextConversation.id);
@@ -512,7 +515,7 @@ export function useConversations({
     } catch {
       await applyConversations(previousConversations);
       setActiveId(previousActiveId);
-      toast.error("Lá»—i káº¿t ná»‘i, khÃ´ng thá»ƒ táº¡o há»™i thoáº¡i má»›i.");
+      toast.error("LÃ¡Â»â€”i kÃ¡ÂºÂ¿t nÃ¡Â»â€˜i, khÃƒÂ´ng thÃ¡Â»Æ’ tÃ¡ÂºÂ¡o hÃ¡Â»â„¢i thoÃ¡ÂºÂ¡i mÃ¡Â»â€ºi.");
     }
   };
 
@@ -546,7 +549,7 @@ export function useConversations({
     } catch {
       await applyConversations(previousConversations);
       setActiveId(previousActiveId);
-      toast.error("Lá»—i káº¿t ná»‘i, khÃ´ng thá»ƒ xÃ³a há»™i thoáº¡i.");
+      toast.error("LÃ¡Â»â€”i kÃ¡ÂºÂ¿t nÃ¡Â»â€˜i, khÃƒÂ´ng thÃ¡Â»Æ’ xÃƒÂ³a hÃ¡Â»â„¢i thoÃ¡ÂºÂ¡i.");
     }
   };
 
@@ -569,11 +572,14 @@ export function useConversations({
         undefined,
         laneForConversation,
         targetLoadId || undefined,
+        managerInstanceId,
       );
       conversation.employeeId = targetLoadId || undefined;
+      conversation.managerInstanceId = managerInstanceId || conversation.managerInstanceId;
     }
 
     const conversationId = conversation.id;
+    const conversationManagerInstanceId = conversation.managerInstanceId || managerInstanceId;
     const newMessage = createMessage(
       options?.type === "manager_note" ? "manager" : "user",
       content,
@@ -586,6 +592,10 @@ export function useConversations({
     }
 
     const updatedMessages = [...conversation.messages, { ...newMessage, conversationId }];
+    const scopedMessages = updatedMessages.map((message) => ({
+      ...message,
+      managerInstanceId: message.managerInstanceId || conversationManagerInstanceId,
+    }));
     const nextTitle = conversation.messages.length === 0
       ? generateConversationTitle(updatedMessages)
       : conversation.title;
@@ -599,7 +609,8 @@ export function useConversations({
     const nextConversation: Conversation = {
       ...conversation,
       title: nextTitle,
-      messages: updatedMessages,
+      messages: scopedMessages,
+      managerInstanceId: conversationManagerInstanceId,
       status: nextStatus,
       updatedAt,
     };
@@ -617,12 +628,16 @@ export function useConversations({
           await apiCreateConversation({ ...conversation, messages: [] }, { backendToken });
         }
 
-        await persistConversationUpdate(conversationId, { title: nextTitle, status: nextStatus, updatedAt }, [newMessage]);
+        await persistConversationUpdate(
+          conversationId,
+          { title: nextTitle, status: nextStatus, updatedAt, managerInstanceId: conversationManagerInstanceId },
+          [{ ...newMessage, managerInstanceId: conversationManagerInstanceId }],
+        );
       }
     } catch {
       await applyConversations(snapshotBeforeSend);
       setActiveId(previousActiveId);
-      toast.error("Lá»—i káº¿t ná»‘i, khÃ´ng thá»ƒ gá»­i tin nháº¯n.");
+      toast.error("LÃ¡Â»â€”i kÃ¡ÂºÂ¿t nÃ¡Â»â€˜i, khÃƒÂ´ng thÃ¡Â»Æ’ gÃ¡Â»Â­i tin nhÃ¡ÂºÂ¯n.");
       return;
     }
 
@@ -665,7 +680,7 @@ export function useConversations({
         token,
         agentId: conversation.agentId,
         sessionKey: conversation.sessionKey,
-        messages: updatedMessages.map((message) => ({
+        messages: scopedMessages.map((message) => ({
           role: message.role,
           content: message.content,
         })),
@@ -681,13 +696,13 @@ export function useConversations({
           const errorContent = aiContent
             ? `${aiContent}\n\n**[Loi: ${error.message}]**`
             : `**[Loi: ${error.message}]**`;
-          toast.error("Káº¿t ná»‘i tá»›i AI bá»‹ giÃ¡n Ä‘oáº¡n. Vui lÃ²ng thá»­ láº¡i.");
+          toast.error("KÃ¡ÂºÂ¿t nÃ¡Â»â€˜i tÃ¡Â»â€ºi AI bÃ¡Â»â€¹ giÃƒÂ¡n Ã„â€˜oÃ¡ÂºÂ¡n. Vui lÃƒÂ²ng thÃ¡Â»Â­ lÃ¡ÂºÂ¡i.");
           void commitAssistantMessage(conversationId, aiMessageId, errorContent, "pending_approval");
         },
       });
     } catch {
       cleanupStreaming(conversationId, aiMessageId);
-      toast.error("KhÃ´ng thá»ƒ báº¯t Ä‘áº§u phiÃªn streaming.");
+      toast.error("KhÃƒÂ´ng thÃ¡Â»Æ’ bÃ¡ÂºÂ¯t Ã„â€˜Ã¡ÂºÂ§u phiÃƒÂªn streaming.");
     }
   };
 
