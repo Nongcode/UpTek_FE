@@ -72,6 +72,7 @@ const pool = require('./src/database');
       $$;
     `);
 
+
     // ─── GP3: manager_instances ───────────────────────────────────────────────
     // Lưu danh sách manager instances (A, B, C...)
     await pool.query(`
@@ -159,6 +160,7 @@ const pool = require('./src/database');
     console.log('GP3: manager_instances and manager_worker_bindings tables created.');
     console.log('GP3: managerInstanceId column added to Conversations and Messages.');
     console.log('GP3: Seeded mgr_pho_phong_A (active) and mgr_pho_phong_B (experimental).');
+
   } catch(e) {
     console.error('Migration error:', e.message);
     process.exit(1);

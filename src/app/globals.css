@@ -407,6 +407,10 @@ body {
   }
 }
 
+
+.agent-dropdown-header {
+  font-size: 0.7rem;
+
 .user-table-wrapper {
   overflow-x: auto;
 }
@@ -423,6 +427,7 @@ body {
 }
 
 .table-status-note {
+
   color: var(--text-secondary);
   font-size: 0.85rem;
 }
@@ -512,6 +517,12 @@ body {
   color: var(--text-secondary);
   font-size: 0.82rem;
   text-transform: uppercase;
+
+  padding: 0.25rem 0.5rem 0.5rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  opacity: 0.6;
+
   letter-spacing: 0.04em;
 }
 
@@ -652,6 +663,7 @@ body {
   color: #eef2ff;
   font-size: 0.8rem;
   font-weight: 600;
+
 }
 
 .group-metric-pill.subtle {
@@ -1405,6 +1417,12 @@ html[data-theme="light"] .search-modal {
   color: #fca5a5;
   border-color: rgba(252, 165, 165, 0.45);
   background: rgba(127, 29, 29, 0.3);
+}
+
+.conversation-status-badge.error {
+  color: #fca5a5;
+  border-color: rgba(252, 165, 165, 0.5);
+  background: rgba(127, 29, 29, 0.34);
 }
 
 .conversation-status-badge.stopped {

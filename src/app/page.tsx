@@ -10,6 +10,7 @@ import ThemeToggle from "@/components/ThemeToggle";
 import { useAuth } from "@/context/AuthContext";
 import { useConversations } from "@/hooks/useConversations";
 import { canAccessAutomationLane, ChatLane } from "@/utils/chatLogic";
+import { getAdminDashboardUrl } from "@/lib/runtimeUrls";
 
 type AppMode = "chat" | "dashboard";
 
@@ -38,12 +39,12 @@ export default function Home() {
 
   const canUseAutomationLane = canAccessAutomationLane(employeeId, accessPolicy);
   const isViewingSubordinate = viewingAgentId !== "" && viewingAgentId !== employeeId;
-  const shouldPollConversations =
-    appMode === "chat" && (((chatLane === "automation") && canUseAutomationLane) || isViewingSubordinate);
-  const adminDashboardUrl = process.env.NEXT_PUBLIC_ADMIN_DASHBOARD_URL;
+  const enableConversationRealtime = appMode === "chat";
+  const adminDashboardUrl = getAdminDashboardUrl();
 
   const {
     filteredConversations,
+    workflowGroups,
     activeConversation,
     activeId,
     isStreaming,
@@ -54,6 +55,13 @@ export default function Home() {
     handleDeleteConversation,
     handleSendMessage,
     handleStopStreaming,
+    activeStatusLabel,
+    activeStreamState,
+    activeWorkflowProgress,
+    createInFlight,
+    transientError,
+    clearTransientError,
+    sseStatus,
   } = useConversations({
     token,
     backendToken,
@@ -62,7 +70,7 @@ export default function Home() {
     viewingAgentId,
     chatLane,
     canUseAutomationLane,
-    enablePolling: shouldPollConversations,
+    enablePolling: enableConversationRealtime,
   });
 
   useEffect(() => {
@@ -188,6 +196,7 @@ export default function Home() {
     <div className="app-container">
       <Sidebar
         conversations={filteredConversations}
+        workflowGroups={workflowGroups}
         activeConversationId={activeId}
         onSelectConversation={onSelectConversation}
         onNewConversation={onCreateConversation}
@@ -199,6 +208,7 @@ export default function Home() {
         onToggle={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
         onOpenDashboard={() => setAppMode("dashboard")}
         canViewAllSessions={!!accessPolicy?.canViewAllSessions}
+        createInFlight={createInFlight}
       />
 
       <main className={`main-content ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}>
@@ -297,6 +307,9 @@ export default function Home() {
             <button
               className="new-chat-icon-button"
               onClick={onCreateConversation}
+
+              disabled={createInFlight}
+
               title="Tạo mới"
               style={{ visibility: appMode === "chat" ? "visible" : "hidden" }}
             >
@@ -319,11 +332,19 @@ export default function Home() {
               </div>
             )}
             <ChatArea
+              conversationId={activeConversation?.id || null}
               messages={activeConversation?.messages || []}
               isStreaming={isStreaming}
               streamingMessageId={streamingMessageId}
               streamingStore={streamingStore}
               agentId={currentAgentName}
+              backendToken={backendToken}
+              streamStatusLabel={activeStatusLabel}
+              streamState={activeStreamState}
+              workflowProgress={activeWorkflowProgress}
+              transientError={transientError}
+              onDismissTransientError={clearTransientError}
+              sseStatus={sseStatus}
             />
 
             <div className="input-container-wrapper">
@@ -334,6 +355,7 @@ export default function Home() {
                 isManagerView={isViewingSubordinate}
                 disabled={!automationCanSend}
                 disabledReason={automationDisabledReason}
+                statusLabel={activeStatusLabel}
               />
             </div>
           </>
