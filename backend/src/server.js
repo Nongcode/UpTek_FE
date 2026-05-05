@@ -1,13 +1,16 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const multer = require('multer');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const pool = require('./database');
+const mediaConfig = require('./config/media');
+const createMediaLegacyRoutes = require('./routes/mediaLegacyRoutes');
+const mediaRoutes = require('./routes/mediaRoutes');
 const {
   buildLoginResponse,
+  buildRefreshResponse,
   canAccessConversation,
   canAccessEmployeeId,
   requireBackendAuth,
@@ -30,7 +33,7 @@ const { injectAutomationMessage } = require('./gateway-sync');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: `${mediaConfig.jsonBodyLimitMb}mb` }));
 const automationSyncToken = process.env.AUTOMATION_SYNC_TOKEN || "";
 
 function normalizeAgentId(value) {
@@ -69,6 +72,12 @@ function normalizeWorkflowConversationStatus(status) {
   }
   if (normalized === 'cancelled') {
     return 'cancelled';
+  }
+  if (normalized === 'stopped') {
+    return 'stopped';
+  }
+  if (normalized === 'error' || normalized === 'failed') {
+    return 'error';
   }
   if (normalized === 'published' || normalized === 'scheduled' || normalized === 'approved') {
     return 'approved';
@@ -218,38 +227,13 @@ app.use((req, res, next) => {
   }
 })();
 
-(async () => {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS "Images" (
-        "id" VARCHAR(255) PRIMARY KEY,
-        "url" TEXT NOT NULL,
-        "companyId" VARCHAR(255),
-        "departmentId" VARCHAR(255),
-        "source" VARCHAR(50),
-        "uploaderId" VARCHAR(255),
-        "createdAt" BIGINT,
-        "productModel" VARCHAR(255),
-        "prefix" VARCHAR(255)
-      );
-    `);
-    console.log('Ensure Images table exists.');
-  } catch (err) {
-    console.error('Failed to create Images table:', err.message);
-  }
-})();
-
-const storageDir = path.join(__dirname, '../storage/images');
-if (!fs.existsSync(storageDir)) {
-  fs.mkdirSync(storageDir, { recursive: true });
-}
-
 function normalizePreviewPath(value) {
   return path.resolve(String(value || '')).replace(/\\/g, '/').replace(/\/+$/g, '').toLowerCase();
 }
 
 function isAllowedPreviewPath(filePath) {
   const resolved = normalizePreviewPath(filePath);
+  const storageDir = mediaConfig.galleryStorageRoot;
   const allowedRoots = [
     storageDir,
     path.join(os.homedir(), '.openclaw'),
@@ -258,8 +242,6 @@ function isAllowedPreviewPath(filePath) {
 
   return allowedRoots.some((root) => resolved === root || resolved.startsWith(`${root}/`));
 }
-
-app.use('/storage/images', express.static(storageDir));
 
 app.get('/api/media-preview', requireBackendAuth, async (req, res) => {
   const rawPath = String(req.query.path || '').trim();
@@ -283,31 +265,8 @@ app.get('/api/media-preview', requireBackendAuth, async (req, res) => {
   return res.sendFile(resolvedPath);
 });
 
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const auth = req.auth || {};
-    let companyId = auth.companyId || 'default_company';
-    let departmentId = auth.departmentId || 'default_dept';
-
-    // Allow high-level roles to override storage destination via request body
-    const canOverride = auth.employeeId === 'admin' || auth.employeeId === 'Admin' || auth.employeeId === 'main' || auth.employeeId === 'giam_doc';
-    if (canOverride) {
-      if (req.body.companyId) companyId = req.body.companyId;
-      if (req.body.departmentId) departmentId = req.body.departmentId;
-    }
-
-    const dir = path.join(storageDir, companyId, departmentId);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    cb(null, dir);
-  },
-  filename: function (req, file, cb) {
-    const timestamp = Date.now();
-    cb(null, `${timestamp}_${file.originalname}`);
-  }
-});
-const upload = multer({ storage: storage });
+app.use(createMediaLegacyRoutes({ automationSyncToken }));
+app.use(mediaRoutes);
 
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body || {};
@@ -320,104 +279,15 @@ app.post('/api/auth/login', async (req, res) => {
   return res.json(result);
 });
 
-app.get('/api/gallery', requireBackendAuth, async (req, res) => {
-  try {
-    let result;
-    if (req.auth?.canViewAllSessions || req.auth?.employeeId === 'pho_phong' || req.auth?.employeeId === 'admin' || req.auth?.employeeId === 'quan_ly') {
-      result = await pool.query('SELECT * FROM "Images" ORDER BY "createdAt" DESC');
-    } else {
-      const companyId = req.auth?.companyId;
-      const departmentId = req.auth?.departmentId;
-      result = await pool.query(
-        'SELECT * FROM "Images" WHERE "companyId" = $1 AND "departmentId" = $2 ORDER BY "createdAt" DESC',
-        [companyId, departmentId]
-      );
-    }
-    return res.json(result.rows);
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
+app.post('/api/auth/refresh', async (req, res) => {
+  const { token, employeeId, employeeName } = req.body || {};
+  const result = buildRefreshResponse({ token, employeeId, employeeName });
+  if (!result) {
+    return res.status(401).json({
+      error: { message: 'Unable to refresh backend session', type: 'unauthorized' },
+    });
   }
-});
-
-app.post('/api/gallery/upload', requireBackendAuth, upload.single('image'), async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: 'No image uploaded' });
-  }
-  
-  const { productModel } = req.body;
-  if (!productModel) {
-    return res.status(400).json({ error: 'productModel is required for manual uploads' });
-  }
-
-  const auth = req.auth || {};
-  let companyId = auth.companyId || 'default_company';
-  let departmentId = auth.departmentId || 'default_dept';
-
-  // Validate and apply overrides from request body if authorized
-  const canOverride = auth.employeeId === 'admin' || auth.employeeId === 'Admin' || auth.employeeId === 'main' || auth.employeeId === 'giam_doc';
-  if (canOverride) {
-    if (req.body.companyId) companyId = req.body.companyId;
-    if (req.body.departmentId) departmentId = req.body.departmentId;
-  }
-
-  const url = `/storage/images/${companyId}/${departmentId}/${req.file.filename}`;
-  const id = `img_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  const source = 'User';
-  const uploaderId = auth.employeeId || 'unknown';
-  const createdAt = Date.now();
-  const prefix = null; // User upload doesn't have prefix naturally, or it can be derived if needed, wait, prompt says only agent needs prefix.
-
-  try {
-    await pool.query(
-      `INSERT INTO "Images" ("id", "url", "companyId", "departmentId", "source", "uploaderId", "createdAt", "productModel", "prefix")
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [id, url, companyId, departmentId, source, uploaderId, createdAt, productModel, prefix]
-    );
-    return res.json({ success: true, url, id });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/gallery/agent-upload', async (req, res) => {
-  if (automationSyncToken) {
-    const incomingToken = req.get('x-automation-sync-token') || '';
-    if (incomingToken !== automationSyncToken) {
-      return res.status(401).json({ error: 'Unauthorized automation sync token' });
-    }
-  }
-
-  const { companyId = 'default_company', departmentId = 'default_dept', filename, base64Data, agentId, productModel, prefix } = req.body;
-  if (!filename || !base64Data || !productModel || !prefix) {
-    return res.status(400).json({ error: 'filename, base64Data, productModel, and prefix are required' });
-  }
-
-  const dir = path.join(storageDir, companyId, departmentId);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-
-  const timestamp = Date.now();
-  const safeFilename = `${timestamp}_${filename.replace(/[^a-zA-Z0-9.\-_]/g, '')}`;
-  const filePath = path.join(dir, safeFilename);
-
-  fs.writeFileSync(filePath, base64Data, 'base64');
-
-  const url = `/storage/images/${companyId}/${departmentId}/${safeFilename}`;
-  const id = `img_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  const source = 'AI';
-  const uploaderId = agentId || 'agent';
-
-  try {
-    await pool.query(
-      `INSERT INTO "Images" ("id", "url", "companyId", "departmentId", "source", "uploaderId", "createdAt", "productModel", "prefix")
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [id, url, companyId, departmentId, source, uploaderId, timestamp, productModel, prefix]
-    );
-    return res.json({ success: true, url, id });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
+  return res.json(result);
 });
 
 app.get('/api/conversations/:employeeId', requireBackendAuth, async (req, res) => {
@@ -501,7 +371,7 @@ app.get('/api/conversations/:employeeId', requireBackendAuth, async (req, res) =
     const placeholders = convIds.map((_, index) => `$${index + 1}`).join(',');
 
     const msgResult = await pool.query(
-      `SELECT * FROM "Messages" WHERE "conversationId" IN (${placeholders}) ORDER BY "timestamp" ASC`,
+      `SELECT * FROM "Messages" WHERE "conversationId" IN (${placeholders}) ORDER BY "timestamp" ASC, "id" ASC`,
       convIds
     );
     const msgRows = msgResult.rows;
@@ -977,12 +847,14 @@ app.post('/internal/workflows/resolve-root', requireInternalAuth, async (req, re
       employeeId,
       brief,
       sessionKey,
+      rootConversationId,
     } = req.body || {};
 
     const normalizedAgentId = normalizeMessageContent(agentId);
     const normalizedEmployeeId = normalizeMessageContent(employeeId) || normalizedAgentId;
     const normalizedBrief = normalizeMessageContent(brief);
     const normalizedSessionKey = normalizeMessageContent(sessionKey);
+    const normalizedRootConversationId = normalizeMessageContent(rootConversationId);
 
     if (!normalizedAgentId) {
       return res.status(400).json({ error: 'agentId is required' });
@@ -990,6 +862,20 @@ app.post('/internal/workflows/resolve-root', requireInternalAuth, async (req, re
 
     try {
       let rootConversation = null;
+
+      if (normalizedRootConversationId) {
+        rootConversation = (
+          await pool.query(
+            `SELECT *
+             FROM "Conversations"
+             WHERE "id" = $1
+               AND "lane" = 'automation'
+               AND COALESCE("role", 'root') = 'root'
+             LIMIT 1`,
+            [normalizedRootConversationId]
+          )
+        ).rows[0] || null;
+      }
 
       if (normalizedSessionKey) {
         rootConversation = (
@@ -1006,7 +892,7 @@ app.post('/internal/workflows/resolve-root', requireInternalAuth, async (req, re
       }
 
       if (!rootConversation && normalizedBrief) {
-        rootConversation = (
+        const rootMatches = (
           await pool.query(
             `SELECT c.*
              FROM "Conversations" c
@@ -1024,26 +910,13 @@ app.post('/internal/workflows/resolve-root', requireInternalAuth, async (req, re
                AND ($2 = '' OR c."employeeId" = $2)
                AND latest_user."content" = $3
              ORDER BY latest_user."timestamp" DESC, c."updatedAt" DESC
-             LIMIT 1`,
+             LIMIT 2`,
             [normalizedAgentId, normalizedEmployeeId || '', normalizedBrief]
           )
-        ).rows[0] || null;
-      }
-
-      if (!rootConversation) {
-        rootConversation = (
-          await pool.query(
-            `SELECT *
-             FROM "Conversations"
-             WHERE "lane" = 'automation'
-               AND COALESCE("role", 'root') = 'root'
-               AND "agentId" = $1
-               AND ($2 = '' OR "employeeId" = $2)
-             ORDER BY "updatedAt" DESC, "createdAt" DESC
-             LIMIT 1`,
-            [normalizedAgentId, normalizedEmployeeId || '']
-          )
-        ).rows[0] || null;
+        ).rows;
+        if (rootMatches.length === 1) {
+          rootConversation = rootMatches[0];
+        }
       }
 
       if (!rootConversation) {
@@ -1088,24 +961,7 @@ app.post('/internal/workflows', requireInternalAuth, async (req, res) => {
     try {
       await client.query('BEGIN');
 
-      let resolvedRootConversationId = rootConversationId || null;
-      if (!resolvedRootConversationId && initiatorAgentId) {
-        const inferredRoot = await client.query(
-          `SELECT "id"
-           FROM "Conversations"
-           WHERE "lane" = 'automation'
-             AND "role" = 'root'
-             AND (
-               "agentId" = $1
-               OR "employeeId" = COALESCE($2, $1)
-               OR "employeeId" = $1
-             )
-           ORDER BY "updatedAt" DESC, "createdAt" DESC
-           LIMIT 1`,
-          [initiatorAgentId, initiatorEmployeeId || null]
-        );
-        resolvedRootConversationId = inferredRoot.rows[0]?.id || null;
-      }
+      const resolvedRootConversationId = rootConversationId || null;
 
       const workflowRecord = (
         await client.query(
@@ -1290,6 +1146,7 @@ app.post('/internal/messages', requireInternalAuth, async (req, res) => {
       await client.query('BEGIN');
       const persistedMessages = [];
       const conversationsById = {};
+      const completedInternalConversationIds = new Set();
 
       for (const message of messages) {
         const conversationResult = await client.query(
@@ -1317,13 +1174,27 @@ app.post('/internal/messages', requireInternalAuth, async (req, res) => {
         ).rows[0];
         persistedMessages.push(insertedMessage);
         conversationsById[message.conversationId] = validation.conversation;
+        if (validation.role === 'assistant' && message.final !== false) {
+          completedInternalConversationIds.add(message.conversationId);
+        }
       }
 
       for (const conversationId of Object.keys(conversationsById)) {
         const updatedConversation = (
           await client.query(
-            'UPDATE "Conversations" SET "updatedAt" = $1 WHERE "id" = $2 RETURNING *',
-            [Date.now(), conversationId]
+            `UPDATE "Conversations"
+             SET "updatedAt" = $1,
+                 "status" = CASE
+                   WHEN $3::boolean
+                     AND COALESCE("lane", 'user') = 'automation'
+                     AND COALESCE("role", 'root') = 'sub_agent'
+                     AND COALESCE("status", 'active') NOT IN ('cancelled', 'stopped', 'error')
+                   THEN 'approved'
+                   ELSE "status"
+                 END
+             WHERE "id" = $2
+             RETURNING *`,
+            [Date.now(), conversationId, completedInternalConversationIds.has(conversationId)]
           )
         ).rows[0];
         conversationsById[conversationId] = hydrateConversationRecord(updatedConversation || conversationsById[conversationId]);
@@ -1475,6 +1346,10 @@ app.get('/api/events', requireBackendAuth, (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
+  res.write(`event: realtime.snapshot\ndata: ${JSON.stringify({
+    timestamp: Date.now(),
+    employeeId: req.auth?.employeeId || null,
+  })}\n\n`);
 
   const heartbeat = setInterval(() => {
     try { res.write(': heartbeat\\n\\n'); } catch { clearInterval(heartbeat); }
@@ -1487,6 +1362,27 @@ app.get('/api/events', requireBackendAuth, (req, res) => {
     sseClients.delete(res);
   });
 });
+
+app.use((err, req, res, next) => {
+  if (err?.type === 'entity.too.large') {
+    return res.status(413).json({
+      error: `Request body too large. Max JSON body size is ${mediaConfig.jsonBodyLimitMb} MB. Max decoded upload size is ${mediaConfig.maxUploadSizeMb} MB`,
+    });
+  }
+  if (err instanceof SyntaxError && 'body' in err) {
+    return res.status(400).json({ error: 'Invalid JSON request body' });
+  }
+  return next(err);
+});
+
+void pool.checkConnection()
+  .then(() => {
+    console.log('Connected successfully to PostgreSQL Database.');
+  })
+  .catch((err) => {
+    console.error('Could not connect to PostgreSQL. Check DATABASE_URL.', err.stack || err.message || err);
+  });
+
 const server = app.listen(PORT, () => {
   console.log(`Backend Server is running on http://localhost:${PORT}`);
 });

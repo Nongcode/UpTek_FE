@@ -2,6 +2,11 @@
 
 import React, { memo, useMemo, useState } from "react";
 import { buildBackendMediaPreviewUrl } from "@/lib/runtimeUrls";
+import {
+  isPlaceholderOnlyAssistantContent,
+  sanitizeAssistantDisplayContent,
+  shouldRenderMediaAttachment,
+} from "@/lib/chatSanitization";
 
 interface MessageBubbleProps {
   role: "user" | "assistant" | "system" | "manager";
@@ -41,7 +46,7 @@ function extractMediaAttachments(text: string): { cleanedText: string; attachmen
 
     const filePath = mediaMatch[1].trim();
     const kind = classifyMediaAttachment(filePath);
-    if (kind) {
+    if (kind && shouldRenderMediaAttachment(filePath)) {
       attachments.push({ path: filePath, kind });
     }
   }
@@ -251,7 +256,7 @@ function AttachmentPreview({
           fontSize: "0.82rem",
         }}
       >
-        Không thể tải preview media. Bạn vẫn có thể mở lại khi backend sẵn sàng.
+        Preview media tạm thời chưa sẵn sàng.
       </div>
     );
   }
@@ -311,11 +316,22 @@ function MessageBubble({
   isStreaming,
   isStreamingMessage,
 }: MessageBubbleProps) {
-  const { cleanedText, attachments } = extractMediaAttachments(content);
+  const { cleanedText: extractedText, attachments } = extractMediaAttachments(content);
+  const cleanedText =
+    role === "assistant" ? sanitizeAssistantDisplayContent(extractedText) : extractedText;
   const [activeAttachment, setActiveAttachment] = useState<MediaAttachment | null>(null);
   const activePreviewUrl = activeAttachment
     ? buildMediaPreviewUrl(activeAttachment.path, backendToken)
     : null;
+
+  if (
+    role === "assistant"
+    && !isStreaming
+    && attachments.length === 0
+    && (cleanedText.length === 0 || isPlaceholderOnlyAssistantContent(cleanedText))
+  ) {
+    return null;
+  }
 
   return (
     <>

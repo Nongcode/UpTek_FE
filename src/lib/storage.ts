@@ -1,5 +1,6 @@
 import { Conversation, Message, Project } from "./types";
 import { buildBackendApiUrl } from "./runtimeUrls";
+import { notifyBackendAuthExpired } from "./backendAuth";
 
 const STORAGE_PREFIX = "openclaw_chat_";
 
@@ -27,6 +28,9 @@ async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Pro
   const response = await fetch(input, init);
   if (!response.ok) {
     const errorData = await response.json().catch(() => null);
+    if (response.status === 401) {
+      notifyBackendAuthExpired();
+    }
     throw new BackendRequestError(
       errorData?.error?.message || `Request failed with status ${response.status}`,
       response.status,
@@ -39,6 +43,9 @@ async function requestVoid(input: RequestInfo | URL, init?: RequestInit): Promis
   const response = await fetch(input, init);
   if (!response.ok) {
     const errorData = await response.json().catch(() => null);
+    if (response.status === 401) {
+      notifyBackendAuthExpired();
+    }
     throw new BackendRequestError(
       errorData?.error?.message || `Request failed with status ${response.status}`,
       response.status,

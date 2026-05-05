@@ -1,4 +1,4 @@
-const BACKEND_API_BASE = "/api";
+const BACKEND_API_BASE = process.env.NEXT_PUBLIC_BACKEND_API_BASE || "/api";
 const GATEWAY_PROXY_BASE = "/api/gateway";
 const STORAGE_BASE = "/storage";
 

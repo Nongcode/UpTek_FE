@@ -50,6 +50,21 @@ export function isBackendTokenExpired(token: string | null | undefined): boolean
   return payload.exp <= Date.now();
 }
 
+export function getBackendTokenRemainingMs(token: string | null | undefined): number {
+  const payload = parseBackendTokenPayload(token);
+  if (!payload || typeof payload.exp !== "number") {
+    return 0;
+  }
+  return Math.max(0, payload.exp - Date.now());
+}
+
+export function shouldRefreshBackendToken(
+  token: string | null | undefined,
+  refreshWindowMs = 10 * 60 * 1000,
+): boolean {
+  return getBackendTokenRemainingMs(token) <= refreshWindowMs;
+}
+
 export function notifyBackendAuthExpired(): void {
   if (typeof window === "undefined") {
     return;

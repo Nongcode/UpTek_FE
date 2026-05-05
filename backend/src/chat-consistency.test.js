@@ -107,6 +107,7 @@ test("canonical route implementations exist only once for critical endpoints", (
   const criticalRoutes = [
     "app.post('/api/conversations'",
     "app.post('/api/messages'",
+    "app.post('/api/auth/refresh'",
     "app.post('/api/automation/agent-event'",
     "app.post('/internal/workflows'",
     "app.post('/internal/conversations'",
@@ -133,6 +134,16 @@ test("personal create route canonicalizes user lane and chat session key", () =>
   assert.match(snippet, /broadcastConversationCreated\(insertedConversation\)/);
 });
 
+test("auth refresh route reissues backend token through canonical auth helper", () => {
+  const snippet = routeSnippet(
+    "app.post('/api/auth/refresh'",
+    "app.get('/api/conversations/:employeeId'",
+  );
+
+  assert.match(snippet, /buildRefreshResponse\(\{ token, employeeId, employeeName \}\)/);
+  assert.match(snippet, /Unable to refresh backend session/);
+});
+
 test("personal message route commits before broadcasting message.created", () => {
   const snippet = routeSnippet(
     "app.post('/api/messages'",
@@ -145,6 +156,34 @@ test("personal message route commits before broadcasting message.created", () =>
   assert.notEqual(messageBroadcastIndex, -1, "api/messages must broadcast");
   assert.ok(commitIndex < messageBroadcastIndex, "api/messages must broadcast only after commit");
   assert.match(snippet, /validateMessagePayload\(message, conversation\)/);
+});
+
+test("conversation load route orders messages deterministically", () => {
+  const snippet = routeSnippet(
+    "app.get('/api/conversations/:employeeId'",
+    "app.get('/api/conversations-global'",
+  );
+
+  assert.match(snippet, /ORDER BY "timestamp" ASC, "id" ASC/);
+});
+
+test("workflow conversation status supports explicit error state", () => {
+  assert.match(serverSource, /normalized === 'error' \|\| normalized === 'failed'/);
+  assert.match(serverSource, /return 'error'/);
+});
+
+test("internal messages complete automation sub-agent conversations after final assistant replies", () => {
+  const snippet = routeSnippet(
+    "app.post('/internal/messages'",
+    "app.patch('/internal/workflows/:id/status'",
+  );
+
+  assert.match(snippet, /completedInternalConversationIds = new Set\(\)/);
+  assert.match(snippet, /validation\.role === 'assistant' && message\.final !== false/);
+  assert.match(snippet, /COALESCE\("lane", 'user'\) = 'automation'/);
+  assert.match(snippet, /COALESCE\("role", 'root'\) = 'sub_agent'/);
+  assert.match(snippet, /COALESCE\("status", 'active'\) NOT IN \('cancelled', 'stopped', 'error'\)/);
+  assert.match(snippet, /THEN 'approved'/);
 });
 
 test("automation event route forces automation lane and broadcasts after commit", () => {
@@ -160,6 +199,30 @@ test("automation event route forces automation lane and broadcasts after commit"
   assert.match(snippet, /buildCanonicalAutomationConversationId/);
   assert.match(snippet, /shouldInjectToGateway = messageExists\.rows\.length === 0/);
   assert.ok(commitIndex < messageBroadcastIndex, "automation event must broadcast only after commit");
+});
+
+test("message broadcast payload carries workflow context for realtime reloads", () => {
+  const payload = buildMessageBroadcastPayload(
+    {
+      id: "msg_checkpoint",
+      conversationId: "conv_root",
+      role: "assistant",
+      type: "approval_request",
+      timestamp: 123,
+    },
+    {
+      id: "conv_root",
+      agentId: "pho_phong",
+      lane: "automation",
+      role: "root",
+      workflowId: "wf_demo",
+    },
+  );
+
+  assert.equal(payload.workflowId, "wf_demo");
+  assert.equal(payload.agentId, "pho_phong");
+  assert.deepEqual(payload.conversationIds, ["conv_root"]);
+  assert.equal(payload.type, "approval_request");
 });
 
 test("internal workflow routes broadcast after commit and progress does not insert messages", () => {
@@ -186,8 +249,13 @@ test("internal workflow routes broadcast after commit and progress does not inse
 
   assert.match(workflowResolveSnippet, /latest_user/);
   assert.match(workflowResolveSnippet, /latest_user\."content" = \$3/);
+  assert.match(workflowResolveSnippet, /rootConversationId/);
+  assert.match(workflowResolveSnippet, /LIMIT 2/);
+  assert.match(workflowResolveSnippet, /rootMatches\.length === 1/);
   assert.match(workflowResolveSnippet, /COALESCE\(c\."role", 'root'\) = 'root'/);
+  assert.doesNotMatch(workflowResolveSnippet, /ORDER BY "updatedAt" DESC, "createdAt" DESC/);
   assert.match(workflowCreateSnippet, /id or workflowId is required/);
+  assert.doesNotMatch(workflowCreateSnippet, /inferredRoot/);
   assert.ok(
     workflowCreateSnippet.indexOf("await client.query('COMMIT')") < workflowCreateSnippet.indexOf("broadcastWorkflowCreated(workflowRecord)"),
     "internal/workflows must broadcast after commit",
@@ -202,6 +270,16 @@ test("internal workflow routes broadcast after commit and progress does not inse
   );
   assert.match(workflowProgressSnippet, /safeBroadcastSSE\('workflow\.progress'/);
   assert.doesNotMatch(workflowProgressSnippet, /INSERT INTO "Messages"/);
+});
+
+test("SSE route emits an initial snapshot event on connect", () => {
+  const snippet = routeSnippet(
+    "app.get('/api/events'",
+    "app.use((err, req, res, next) => {",
+  );
+
+  assert.match(snippet, /event: realtime\.snapshot/);
+  assert.match(snippet, /employeeId: req\.auth\?\.employeeId \|\| null/);
 });
 
 test("backend startup handles EADDRINUSE with explicit diagnostics", () => {

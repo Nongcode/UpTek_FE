@@ -5,10 +5,15 @@ import { Message } from "@/lib/types";
 import MessageBubble from "./MessageBubble";
 import StreamingMessage from "./StreamingMessage";
 import { StreamingStore } from "@/hooks/useConversations";
-import { StreamState, type WorkflowProgressState } from "@/hooks/useConversations.helpers";
+import {
+  isTerminalStreamPhase,
+  StreamState,
+  type WorkflowProgressState,
+} from "@/hooks/useConversations.helpers";
 import { SSEConnectionStatus } from "@/hooks/useSSE";
 
 interface ChatAreaProps {
+  conversationId?: string | null;
   messages: Message[];
   isStreaming: boolean;
   streamingMessageId: string | null;
@@ -34,6 +39,7 @@ function formatElapsed(startedAt: number | null | undefined): string | null {
 }
 
 function ChatArea({
+  conversationId,
   messages,
   isStreaming,
   streamingMessageId,
@@ -49,12 +55,20 @@ function ChatArea({
 }: ChatAreaProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
+  const resizeSnapshotRef = useRef({ height: 0, count: 0, lastId: "" });
+  const currentMessageSnapshotRef = useRef({ count: 0, lastId: "" });
   const [hasUnreadBelow, setHasUnreadBelow] = useState(false);
   const [heartbeatTick, setHeartbeatTick] = useState(0);
   const hasActiveStreamState = Boolean(
-    streamState && !["completed", "aborted", "transport_error", "backend_sync_error"].includes(streamState.phase),
+    streamState && !isTerminalStreamPhase(streamState.phase),
   );
+  const latestMessageId = messages[messages.length - 1]?.id || "";
+  currentMessageSnapshotRef.current = {
+    count: messages.length,
+    lastId: latestMessageId,
+  };
 
   useEffect(() => {
     if (!hasActiveStreamState && !streamStatusLabel) {
@@ -66,29 +80,94 @@ function ChatArea({
     return () => clearInterval(timer);
   }, [hasActiveStreamState, streamStatusLabel]);
 
+  const isNearBottom = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return true;
+    }
+    return container.scrollHeight - container.scrollTop - container.clientHeight < 120;
+  }, []);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+    const container = containerRef.current;
+    if (!container) {
+      bottomRef.current?.scrollIntoView({ behavior });
+      return;
+    }
+    container.scrollTo({ top: container.scrollHeight, behavior });
+    setHasUnreadBelow(false);
+  }, []);
+
   const scrollToBottomIfNeeded = useCallback(() => {
+    shouldAutoScrollRef.current = shouldAutoScrollRef.current || isNearBottom();
     if (!shouldAutoScrollRef.current) {
       setHasUnreadBelow(true);
       return;
     }
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    setHasUnreadBelow(false);
-  }, []);
+    scrollToBottom("auto");
+  }, [isNearBottom, scrollToBottom]);
 
   const handleScroll = useCallback(() => {
     if (!containerRef.current) {
       return;
     }
-    const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
-    shouldAutoScrollRef.current = scrollHeight - scrollTop - clientHeight < 100;
+    shouldAutoScrollRef.current = isNearBottom();
     if (shouldAutoScrollRef.current) {
       setHasUnreadBelow(false);
     }
-  }, []);
+  }, [isNearBottom]);
 
   useEffect(() => {
     scrollToBottomIfNeeded();
-  }, [messages, isStreaming, scrollToBottomIfNeeded]);
+  }, [messages.length, messages[messages.length - 1]?.id, isStreaming, scrollToBottomIfNeeded]);
+
+  useEffect(() => {
+    shouldAutoScrollRef.current = true;
+    resizeSnapshotRef.current = {
+      height: 0,
+      ...currentMessageSnapshotRef.current,
+    };
+    requestAnimationFrame(() => scrollToBottom("auto"));
+  }, [conversationId, scrollToBottom]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    const messagesElement = messagesRef.current;
+    if (!container || !messagesElement || typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    resizeSnapshotRef.current = {
+      height: container.scrollHeight,
+      ...currentMessageSnapshotRef.current,
+    };
+    const observer = new ResizeObserver(() => {
+      const previousSnapshot = resizeSnapshotRef.current;
+      const nextHeight = container.scrollHeight;
+      const heightDelta = nextHeight - previousSnapshot.height;
+      const messageListChanged =
+        previousSnapshot.count !== currentMessageSnapshotRef.current.count
+        || previousSnapshot.lastId !== currentMessageSnapshotRef.current.lastId;
+      resizeSnapshotRef.current = {
+        height: nextHeight,
+        ...currentMessageSnapshotRef.current,
+      };
+
+      if (shouldAutoScrollRef.current || isNearBottom()) {
+        shouldAutoScrollRef.current = true;
+        scrollToBottom("auto");
+        return;
+      }
+
+      if (heightDelta !== 0 && !messageListChanged) {
+        container.scrollTop += heightDelta;
+      }
+      setHasUnreadBelow(true);
+    });
+
+    observer.observe(messagesElement);
+    return () => observer.disconnect();
+  }, [isNearBottom, scrollToBottom]);
 
   const progressSummary = useMemo(() => {
     if (!streamStatusLabel) {
@@ -126,11 +205,13 @@ function ChatArea({
           style={{
             position: "sticky",
             top: 0,
-            zIndex: 2,
+            zIndex: 8,
             display: "grid",
             gap: "8px",
-            padding: "12px 16px 0",
-            background: "linear-gradient(180deg, var(--bg-primary) 0%, rgba(0,0,0,0) 100%)",
+            padding: "12px 16px",
+            background: "var(--bg-primary)",
+            borderBottom: "1px solid rgba(148, 163, 184, 0.12)",
+            boxShadow: "0 10px 22px rgba(2, 6, 23, 0.20)",
           }}
         >
           {progressSummary && (
@@ -189,7 +270,7 @@ function ChatArea({
         </div>
       )}
 
-      <div className="chat-messages">
+      <div className="chat-messages" ref={messagesRef}>
         {messages.map((message) => {
           const isStreamingBubble = isStreaming && message.id === streamingMessageId;
           if (isStreamingBubble) {
@@ -223,8 +304,7 @@ function ChatArea({
           type="button"
           onClick={() => {
             shouldAutoScrollRef.current = true;
-            bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-            setHasUnreadBelow(false);
+            scrollToBottom("smooth");
           }}
           style={{
             position: "sticky",

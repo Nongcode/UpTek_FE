@@ -355,6 +355,27 @@ function buildLoginResponse(email, password) {
   };
 }
 
+function buildRefreshResponse({ token, employeeId, employeeName }) {
+  const config = loadOpenClawConfig();
+  const expectedGatewayToken = normalizeText(config?.gateway?.auth?.token);
+  const incomingGatewayToken = normalizeText(token);
+  if (!expectedGatewayToken || !incomingGatewayToken || incomingGatewayToken !== expectedGatewayToken) {
+    return null;
+  }
+
+  const accessPolicy = resolveAccessPolicyForEmployee(config, employeeId, employeeName || employeeId);
+  if (!accessPolicy) {
+    return null;
+  }
+
+  return {
+    ok: true,
+    token: expectedGatewayToken,
+    backendToken: issueBackendToken(config, accessPolicy),
+    accessPolicy,
+  };
+}
+
 function extractBearerToken(req) {
   const authHeader = String(req.get("authorization") || "");
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
@@ -375,12 +396,26 @@ function requireBackendAuth(req, res, next) {
   return next();
 }
 
+function optionalBackendAuth(req, res, next) {
+  const config = loadOpenClawConfig();
+  const queryToken = typeof req.query?.token === 'string' ? req.query.token : '';
+  const token = extractBearerToken(req) || queryToken;
+  const payload = token ? verifyBackendToken(config, token) : null;
+  if (payload) {
+    req.auth = payload;
+    req.openclawConfig = config;
+  }
+  return next();
+}
+
 module.exports = {
   buildLoginResponse,
+  buildRefreshResponse,
   canAccessConversation,
   canAccessEmployeeId,
   extractBearerToken,
   loadOpenClawConfig,
+  optionalBackendAuth,
   requireBackendAuth,
   resolveConversationAgentId,
 };

@@ -18,7 +18,7 @@ export interface Conversation {
   workflowId?: string;
   role?: "root" | "sub_agent";
   parentConversationId?: string;
-  status?: "active" | "pending_approval" | "approved" | "cancelled" | "stopped";
+  status?: "active" | "pending_approval" | "approved" | "cancelled" | "stopped" | "error";
   employeeId?: string;
   createdAt: number;
   updatedAt: number;

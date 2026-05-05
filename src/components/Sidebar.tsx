@@ -48,6 +48,7 @@ export default function Sidebar({
     if (status === "approved") return "Hoàn tất";
     if (status === "cancelled") return "Đã hủy";
     if (status === "stopped") return "Đã dừng";
+    if (status === "error") return "Lỗi";
     return "Đang chạy";
   };
 
@@ -195,7 +196,7 @@ export default function Sidebar({
                 onDeleteConversation(selectedConversationId);
               }
             }}
-            title="XÃ³a luá»“ng"
+            title="Xóa luồng"
           >
             <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
               <path d="M5.5 1a.5.5 0 00-.5.5V2H2.5a.5.5 0 000 1h.538l.46 8.28A1.5 1.5 0 005 12.75h4a1.5 1.5 0 001.502-1.47L10.962 3h.538a.5.5 0 000-1H9v-.5a.5.5 0 00-.5-.5h-3zM6 2v-.5h2V2H6z" />
@@ -264,7 +265,7 @@ export default function Sidebar({
               {workflowGroups.length > 0 && (
                 <div className="sidebar-group">
                   {userConversations.length > 0 && (
-                    <div className="sidebar-group-label">Luá»“ng tá»± Ä‘á»™ng</div>
+                    <div className="sidebar-group-label">Luồng tự động</div>
                   )}
                   {workflowGroups.map((group) => renderWorkflowBox(group))}
                 </div>
@@ -331,7 +332,7 @@ export default function Sidebar({
               <span className="user-name">{employeeName || "User"}</span>
               <span className="user-role">{employeeId || ""}</span>
             </div>
-            <button className="logout-button" onClick={onLogout} title="ÄÄƒng xuáº¥t">
+            <button className="logout-button" onClick={onLogout} title="Đăng xuất">
               <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M6 15H3a1 1 0 01-1-1V4a1 1 0 011-1h3M12 12l3-3-3-3M7 9h8" />
               </svg>

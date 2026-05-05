@@ -26,10 +26,14 @@ import { SSEConnectionStatus, SSEEventName, useSSE } from "@/hooks/useSSE";
 import {
   findPersistedCheckpointMessage,
   formatWorkflowProgressLabel,
+  buildRestoredAutomationStreamState,
   getStreamPhaseLabel,
   hasFreshApprovalCheckpoint,
+  isTerminalStreamPhase,
   mergeFetchedConversations,
   normalizeConversationRecord,
+  resolveNextActiveConversationId,
+  resolveConversationLoadTarget,
   shouldIgnoreLateStreamChunk,
   type StreamPhase,
   type StreamState,
@@ -225,13 +229,17 @@ export function useConversations({
   const streamingMapRef = useRef<
     Map<string, { messageId: string; controller: AbortController; requestId: string; superseded?: boolean }>
   >(new Map());
+  const streamStatesRef = useRef<Record<string, StreamState>>({});
   const streamContentRef = useRef<Map<string, string>>(new Map());
   const streamListenersRef = useRef<Map<string, Set<() => void>>>(new Map());
   const streamingStoreRef = useRef<StreamingStore | null>(null);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const isViewingSubordinate = viewingAgentId !== "" && viewingAgentId !== employeeId;
-  const targetLoadId = isViewingSubordinate ? viewingAgentId : employeeId;
+  const targetLoadId = resolveConversationLoadTarget({
+    chatLane,
+    employeeId,
+    viewingAgentId,
+  });
   const shouldFetch = Boolean(targetLoadId && backendToken);
 
   const updateStreamState = (conversationId: string, updater: StreamState | ((previous: StreamState | null) => StreamState | null)) => {
@@ -296,6 +304,10 @@ export function useConversations({
   }, [activeId]);
 
   useEffect(() => {
+    streamStatesRef.current = streamStates;
+  }, [streamStates]);
+
+  useEffect(() => {
     if (heartbeatRef.current) {
       clearInterval(heartbeatRef.current);
       heartbeatRef.current = null;
@@ -319,6 +331,11 @@ export function useConversations({
     backendToken,
     enabled: enablePolling,
     onEvent: (eventName: SSEEventName, data) => {
+      if (eventName === "realtime.snapshot") {
+        void mutateRef.current?.();
+        return;
+      }
+
       if (eventName === "workflow.progress") {
         const progress = toProgressState(data);
         if (progress) {
@@ -345,6 +362,12 @@ export function useConversations({
   const refreshInterval = useMemo(() => {
     if (!enablePolling) {
       return 0;
+    }
+    const hasActiveAutomationStream =
+      chatLane === "automation"
+      && Object.values(streamStates).some((state) => !isTerminalStreamPhase(state.phase));
+    if (hasActiveAutomationStream) {
+      return 3000;
     }
     if (sseStatus !== "connected") {
       return chatLane === "automation" ? 5000 : 10000;
@@ -380,6 +403,8 @@ export function useConversations({
           Object.entries(streamStates).map(([conversationId, state]) => [
             conversationId,
             {
+              phase: state.phase,
+              messageId: state.messageId,
               latestInputTimestamp: state.latestInputTimestamp,
               finalContent: state.finalContent || streamContentRef.current.get(state.messageId) || "",
             },
@@ -424,39 +449,59 @@ export function useConversations({
   };
 
   useEffect(() => {
+    if (!enablePolling || !backendToken) {
+      return;
+    }
+
+    const refreshAfterRealtimeResume = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      void mutateRef.current?.();
+    };
+
+    window.addEventListener("focus", refreshAfterRealtimeResume);
+    window.addEventListener("online", refreshAfterRealtimeResume);
+    document.addEventListener("visibilitychange", refreshAfterRealtimeResume);
+    return () => {
+      window.removeEventListener("focus", refreshAfterRealtimeResume);
+      window.removeEventListener("online", refreshAfterRealtimeResume);
+      document.removeEventListener("visibilitychange", refreshAfterRealtimeResume);
+    };
+  }, [backendToken, enablePolling]);
+
+  useEffect(() => {
     conversationsRef.current = conversations;
   }, [conversations]);
 
   useEffect(() => {
-    const activeConversation =
-      conversations.find((conversation) => {
-        if (conversation.id !== activeIdRef.current) {
-          return false;
-        }
-        return normalizeConversationRecord(conversation).lane === "automation";
-      }) || null;
-    if (!activeConversation) {
-      return;
-    }
+    for (const [conversationId, streamState] of Object.entries(streamStates)) {
+      if (isTerminalStreamPhase(streamState.phase)) {
+        continue;
+      }
 
-    const activeStreamState = streamStates[activeConversation.id] || null;
-    if (!activeStreamState) {
-      return;
-    }
-    if (["completed", "aborted", "transport_error", "backend_sync_error"].includes(activeStreamState.phase)) {
-      return;
-    }
+      const streamConversation =
+        conversations.find((conversation) => {
+          if (conversation.id !== conversationId) {
+            return false;
+          }
+          return normalizeConversationRecord(conversation).lane === "automation";
+        }) || null;
+      if (!streamConversation) {
+        continue;
+      }
 
-    const checkpointMessage = findPersistedCheckpointMessage(
-      activeConversation,
-      activeStreamState.latestInputTimestamp,
-      activeStreamState.finalContent || streamContentRef.current.get(activeStreamState.messageId) || "",
-    );
-    if (!checkpointMessage) {
-      return;
-    }
+      const checkpointMessage = findPersistedCheckpointMessage(
+        streamConversation,
+        streamState.latestInputTimestamp,
+        streamState.finalContent || streamContentRef.current.get(streamState.messageId) || "",
+      );
+      if (!checkpointMessage) {
+        continue;
+      }
 
-    void finalizeActiveStreamFromBackendCheckpoint(activeConversation.id, checkpointMessage);
+      void finalizeActiveStreamFromBackendCheckpoint(conversationId, checkpointMessage);
+    }
   }, [conversations, streamStates]);
 
   const matchesLaneConversation = (conversation: Conversation) => {
@@ -483,7 +528,7 @@ export function useConversations({
       return false;
     }
     if (viewingAgentId === employeeId) {
-      return normalizedConversation.employeeId === employeeId;
+      return normalizedConversation.employeeId === employeeId || Boolean(normalizedConversation.workflowId);
     }
     return normalizedConversation.agentId === viewingAgentId || normalizedConversation.employeeId === viewingAgentId;
   };
@@ -514,17 +559,15 @@ export function useConversations({
   }, [chatLane, conversations, employeeId, viewingAgentId]);
 
   useEffect(() => {
-    if (filteredConversations.length === 0) {
-      if (activeIdRef.current !== null) {
-        setActiveId(null);
-      }
-      return;
+    const nextActiveId = resolveNextActiveConversationId({
+      currentActiveId: activeIdRef.current,
+      filteredConversationIds: filteredConversations.map((conversation) => conversation.id),
+      workflowGroups,
+    });
+    if (nextActiveId !== activeIdRef.current) {
+      setActiveId(nextActiveId);
     }
-    if (activeIdRef.current && filteredConversations.some((conversation) => conversation.id === activeIdRef.current)) {
-      return;
-    }
-    setActiveId(filteredConversations[0].id);
-  }, [filteredConversations]);
+  }, [filteredConversations, workflowGroups]);
 
   const applyConversations = async (nextConversations: Conversation[]) => {
     conversationsRef.current = nextConversations;
@@ -552,6 +595,67 @@ export function useConversations({
     }
   };
 
+  useEffect(() => {
+    if (chatLane !== "automation" || !enablePolling) {
+      return;
+    }
+
+    let nextConversations: Conversation[] | null = null;
+    const now = Date.now();
+    const activeConversationId = activeIdRef.current;
+    if (!activeConversationId) {
+      return;
+    }
+
+    for (const conversation of conversationsRef.current) {
+      if (conversation.id !== activeConversationId) {
+        continue;
+      }
+      const restoredState = buildRestoredAutomationStreamState(conversation, now);
+      if (!restoredState) {
+        continue;
+      }
+      const currentState = streamStatesRef.current[conversation.id] || null;
+      if (currentState && !isTerminalStreamPhase(currentState.phase)) {
+        continue;
+      }
+      if (streamingMapRef.current.has(conversation.id)) {
+        continue;
+      }
+
+      markPendingMessage(conversation.id, restoredState.messageId);
+      pendingConversationIdsRef.current.add(conversation.id);
+      setStreamContent(restoredState.messageId, restoredState.finalContent || "");
+      updateStreamState(conversation.id, restoredState);
+
+      if (!conversation.messages.some((message) => message.id === restoredState.messageId)) {
+        nextConversations = (nextConversations || conversationsRef.current).map((item) => {
+          if (item.id !== conversation.id) {
+            return item;
+          }
+          return {
+            ...item,
+            messages: [
+              ...item.messages,
+              {
+                id: restoredState.messageId,
+                role: "assistant",
+                type: "regular",
+                content: "",
+                timestamp: restoredState.latestInputTimestamp + 1,
+                conversationId: conversation.id,
+              },
+            ],
+          };
+        });
+      }
+    }
+
+    if (nextConversations) {
+      void applyConversations(nextConversations);
+    }
+  }, [activeId, chatLane, conversations, enablePolling]);
+
   const getActiveStreamRequestId = (conversationId: string): string | null => {
     return streamingMapRef.current.get(conversationId)?.requestId || null;
   };
@@ -561,25 +665,31 @@ export function useConversations({
     checkpointMessage: Message,
   ) => {
     const activeStream = streamingMapRef.current.get(conversationId);
+    const streamMessageId = activeStream?.messageId || streamStates[conversationId]?.messageId || "";
     if (activeStream) {
       activeStream.superseded = true;
       activeStream.controller.abort();
       streamingMapRef.current.delete(conversationId);
-      clearStreamContent(activeStream.messageId);
-      clearPendingMessage(conversationId, activeStream.messageId);
+    }
 
-      await applyConversations(
-        conversationsRef.current.map((conversation) => {
-          if (conversation.id !== conversationId) {
-            return conversation;
-          }
+    if (streamMessageId) {
+      clearStreamContent(streamMessageId);
+      clearPendingMessage(conversationId, streamMessageId);
 
-          return {
-            ...conversation,
-            messages: conversation.messages.filter((message) => message.id !== activeStream.messageId),
-          };
-        }),
-      );
+      if (streamMessageId !== checkpointMessage.id) {
+        await applyConversations(
+          conversationsRef.current.map((conversation) => {
+            if (conversation.id !== conversationId) {
+              return conversation;
+            }
+
+            return {
+              ...conversation,
+              messages: conversation.messages.filter((message) => message.id !== streamMessageId),
+            };
+          }),
+        );
+      }
     }
 
     const currentConversation = conversationsRef.current.find((conversation) => conversation.id === conversationId) || null;
@@ -628,6 +738,36 @@ export function useConversations({
         errorMessage: errorMessage || null,
       };
     });
+  };
+
+  const waitForBackendCheckpointAfterTransportDrop = (
+    conversationId: string,
+    messageId: string,
+    finalContent: string,
+    errorMessage?: string | null,
+  ) => {
+    const activeStream = streamingMapRef.current.get(conversationId);
+    if (activeStream) {
+      activeStream.superseded = true;
+      activeStream.controller.abort();
+      streamingMapRef.current.delete(conversationId);
+    }
+
+    markPendingMessage(conversationId, messageId);
+    pendingConversationIdsRef.current.add(conversationId);
+    setStreamContent(messageId, finalContent);
+    updateStreamState(conversationId, (previous) =>
+      previous
+        ? {
+            ...previous,
+            phase: "syncing_backend",
+            finalContent,
+            lastActivityAt: Date.now(),
+            errorMessage: errorMessage || null,
+          }
+        : previous,
+    );
+    void mutate();
   };
 
   const persistConversationUpdate = async (
@@ -1074,6 +1214,15 @@ export function useConversations({
               cleanupStreaming(conversation.id, assistantMessageId, "completed");
               return;
             }
+            if (laneForConversation === "automation") {
+              waitForBackendCheckpointAfterTransportDrop(
+                conversation.id,
+                assistantMessageId,
+                finalContent,
+                error.message,
+              );
+              return;
+            }
             cleanupStreaming(conversation.id, assistantMessageId, "transport_error", error.message);
             toast.error("Ket noi toi agent bi gian doan.");
             setTransientError("Ket noi bi gian doan, dang doi du lieu dong bo tu backend...");
@@ -1081,6 +1230,15 @@ export function useConversations({
         });
       } catch (error) {
         if (shouldIgnoreLateStreamChunk(streamRequestId, getActiveStreamRequestId(conversation.id))) {
+          return;
+        }
+        if (laneForConversation === "automation") {
+          waitForBackendCheckpointAfterTransportDrop(
+            conversation.id,
+            assistantMessageId,
+            finalContent,
+            error instanceof Error ? error.message : "Stream failed",
+          );
           return;
         }
         cleanupStreaming(conversation.id, assistantMessageId, "transport_error", error instanceof Error ? error.message : "Stream failed");
@@ -1100,19 +1258,20 @@ export function useConversations({
       return;
     }
     const activeStream = streamingMapRef.current.get(conversationId);
-    if (!activeStream) {
+    const streamMessageId = activeStream?.messageId || streamStates[conversationId]?.messageId || "";
+    if (!streamMessageId) {
       return;
     }
-    activeStream.controller.abort();
+    activeStream?.controller.abort();
     await applyConversations(
       conversationsRef.current.map((conversation) => ({
         ...conversation,
         messages: conversation.id === conversationId
-          ? conversation.messages.filter((message) => message.id !== activeStream.messageId)
+          ? conversation.messages.filter((message) => message.id !== streamMessageId)
           : conversation.messages,
       })),
     );
-    cleanupStreaming(conversationId, activeStream.messageId, "aborted");
+    cleanupStreaming(conversationId, streamMessageId, "aborted");
   };
 
   const activeConversation =
@@ -1130,7 +1289,7 @@ export function useConversations({
     state: activeStreamState,
     workflowProgressLabel: formatWorkflowProgressLabel(activeWorkflowProgress),
   });
-  const isStreaming = Boolean(activeStreamState && !["completed", "aborted", "transport_error", "backend_sync_error"].includes(activeStreamState.phase));
+  const isStreaming = Boolean(activeStreamState && !isTerminalStreamPhase(activeStreamState.phase));
   const streamingMessageId = activeStreamState?.messageId || null;
 
   return {

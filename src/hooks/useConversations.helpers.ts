@@ -28,6 +28,10 @@ export type StreamState = {
   errorMessage?: string | null;
 };
 
+export function isTerminalStreamPhase(phase: StreamPhase): boolean {
+  return ["completed", "aborted", "transport_error", "backend_sync_error"].includes(phase);
+}
+
 export type WorkflowProgressState = {
   workflowId: string;
   conversationId: string | null;
@@ -37,6 +41,8 @@ export type WorkflowProgressState = {
   status: string | null;
   timestamp: number;
 };
+
+export const RESTORED_AUTOMATION_STREAM_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
 function normalizeText(value: string | null | undefined): string {
   return String(value || "").replace(/\s+/g, " ").trim();
@@ -62,6 +68,25 @@ export function normalizeConversationRecord(conversation: Conversation): Convers
     ...conversation,
     lane: normalizeLane(conversation),
   };
+}
+
+export function resolveConversationLoadTarget(params: {
+  chatLane: "user" | "automation";
+  employeeId: string | null;
+  viewingAgentId: string;
+}): string | null {
+  const employeeId = normalizeText(params.employeeId);
+  const viewingAgentId = normalizeText(params.viewingAgentId);
+
+  if (params.chatLane === "user") {
+    return employeeId || viewingAgentId || null;
+  }
+
+  if (viewingAgentId && viewingAgentId !== employeeId) {
+    return viewingAgentId;
+  }
+
+  return employeeId || viewingAgentId || null;
 }
 
 export function hasFreshApprovalCheckpoint(
@@ -134,7 +159,13 @@ export function isPersistedCheckpointMessage(params: {
   }
 
   const normalizedFinalContent = normalizeText(params.finalContent);
-  return normalizedFinalContent.length > 0 && normalizedContent === normalizedFinalContent;
+  if (normalizedFinalContent.length > 0 && normalizedContent === normalizedFinalContent) {
+    return true;
+  }
+
+  // Automation backend can persist a regular assistant reply instead of an approval_request.
+  // Once a real assistant message exists after the user's input, the UI must stop blocking input.
+  return true;
 }
 
 export function findPersistedCheckpointMessage(
@@ -161,6 +192,67 @@ export function findPersistedCheckpointMessage(
   return null;
 }
 
+export function findLatestUserInputMessage(conversation: Conversation | null | undefined): Message | null {
+  if (!conversation) {
+    return null;
+  }
+  for (const message of [...conversation.messages].sort((left, right) => right.timestamp - left.timestamp)) {
+    if (message.role === "user" || message.role === "manager") {
+      return message;
+    }
+  }
+  return null;
+}
+
+export function buildRestoredAutomationStreamState(
+  conversation: Conversation,
+  now = Date.now(),
+  maxAgeMs = RESTORED_AUTOMATION_STREAM_MAX_AGE_MS,
+): StreamState | null {
+  const normalizedConversation = normalizeConversationRecord(conversation);
+  if (normalizedConversation.lane !== "automation") {
+    return null;
+  }
+
+  const status = String(normalizedConversation.status || "active").trim();
+  if (status && status !== "active") {
+    return null;
+  }
+
+  const latestInput = findLatestUserInputMessage(normalizedConversation);
+  if (!latestInput) {
+    return null;
+  }
+
+  const latestInputTimestamp = Number(latestInput.timestamp) || 0;
+  if (!latestInputTimestamp || now - latestInputTimestamp > maxAgeMs) {
+    return null;
+  }
+
+  const checkpointMessage = findPersistedCheckpointMessage(
+    normalizedConversation,
+    latestInputTimestamp,
+    "",
+  );
+  if (checkpointMessage) {
+    return null;
+  }
+
+  const messageId = `msg_resume_${normalizedConversation.id}_${latestInputTimestamp}`;
+  return {
+    conversationId: normalizedConversation.id,
+    messageId,
+    streamRequestId: `resume_${normalizedConversation.id}_${latestInputTimestamp}`,
+    phase: "syncing_backend",
+    startedAt: latestInputTimestamp,
+    lastActivityAt: now,
+    firstTokenAt: null,
+    latestInputTimestamp,
+    finalContent: "",
+    errorMessage: null,
+  };
+}
+
 export function shouldIgnoreLateStreamChunk(
   streamRequestId: string | null | undefined,
   activeStreamRequestId: string | null | undefined,
@@ -183,7 +275,66 @@ function uniqueMessages(messages: Message[]): Message[] {
     seen.add(message.id);
     ordered.push(message);
   }
-  return ordered.sort((left, right) => left.timestamp - right.timestamp);
+  return ordered.sort(compareMessagesForDisplay);
+}
+
+function messageRoleRank(role: Message["role"]): number {
+  if (role === "system") return 0;
+  if (role === "manager") return 1;
+  if (role === "user") return 2;
+  if (role === "assistant") return 3;
+  return 4;
+}
+
+function compareMessagesForDisplay(left: Message, right: Message): number {
+  const timestampDiff = (Number(left.timestamp) || 0) - (Number(right.timestamp) || 0);
+  if (timestampDiff !== 0) {
+    return timestampDiff;
+  }
+
+  const roleDiff = messageRoleRank(left.role) - messageRoleRank(right.role);
+  if (roleDiff !== 0) {
+    return roleDiff;
+  }
+
+  return String(left.id || "").localeCompare(String(right.id || ""));
+}
+
+export function resolveNextActiveConversationId(params: {
+  currentActiveId: string | null;
+  filteredConversationIds: string[];
+  workflowGroups: Array<{
+    rootConversationId: string | null;
+    memberConversationIds: string[];
+  }>;
+}): string | null {
+  const visibleIds = new Set(params.filteredConversationIds);
+  for (const group of params.workflowGroups) {
+    for (const conversationId of group.memberConversationIds) {
+      visibleIds.add(conversationId);
+    }
+  }
+
+  if (params.currentActiveId && visibleIds.has(params.currentActiveId)) {
+    return params.currentActiveId;
+  }
+
+  const firstFilteredId = params.filteredConversationIds[0];
+  if (firstFilteredId) {
+    return firstFilteredId;
+  }
+
+  for (const group of params.workflowGroups) {
+    if (group.rootConversationId) {
+      return group.rootConversationId;
+    }
+    const firstMemberId = group.memberConversationIds[0];
+    if (firstMemberId) {
+      return firstMemberId;
+    }
+  }
+
+  return null;
 }
 
 export function mergeFetchedConversations(params: {
@@ -194,7 +345,7 @@ export function mergeFetchedConversations(params: {
   streamingMessageIdsByConversation: Map<string, string>;
   streamStateByConversation?: Map<
     string,
-    Pick<StreamState, "latestInputTimestamp" | "finalContent">
+    Pick<StreamState, "phase" | "messageId" | "latestInputTimestamp" | "finalContent">
   >;
 }): Conversation[] {
   const localById = new Map(params.localConversations.map((conversation) => [conversation.id, normalizeConversationRecord(conversation)]));
@@ -204,8 +355,10 @@ export function mergeFetchedConversations(params: {
   for (const remoteConversation of remoteById.values()) {
     const localConversation = localById.get(remoteConversation.id);
     const pendingIds = params.pendingMessageIdsByConversation.get(remoteConversation.id) || new Set<string>();
-    const streamingMessageId = params.streamingMessageIdsByConversation.get(remoteConversation.id);
     const streamState = params.streamStateByConversation?.get(remoteConversation.id);
+    const streamingMessageId =
+      params.streamingMessageIdsByConversation.get(remoteConversation.id)
+      || (streamState && !isTerminalStreamPhase(streamState.phase) ? streamState.messageId : undefined);
     const backendCheckpointMessage = streamState
       ? findPersistedCheckpointMessage(
           remoteConversation,
@@ -258,12 +411,7 @@ export function getStreamPhaseLabel(params: {
     return null;
   }
 
-  const isActiveStreamPhase = ![
-    "completed",
-    "aborted",
-    "transport_error",
-    "backend_sync_error",
-  ].includes(state.phase);
+  const isActiveStreamPhase = !isTerminalStreamPhase(state.phase);
 
   if (params.workflowProgressLabel && isActiveStreamPhase) {
     return params.workflowProgressLabel;
@@ -290,7 +438,7 @@ export function getStreamPhaseLabel(params: {
     case "saving_assistant_message":
       return "Dang luu phan hoi...";
     case "syncing_backend":
-      return "Dang dong bo workflow...";
+      return "Dang doi du lieu dong bo tu backend...";
     case "aborted":
       return "Da dung phan hoi.";
     case "transport_error":

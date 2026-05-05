@@ -1,6 +1,8 @@
 import { BootstrapConfig, LoginResponse } from "./types";
 import { buildBackendApiUrl, buildGatewayProxyUrl } from "./runtimeUrls";
 
+export const BACKEND_BASE = process.env.NEXT_PUBLIC_BACKEND_API_BASE || "/api";
+
 export async function fetchBootstrapConfig(): Promise<BootstrapConfig> {
   const res = await fetch(buildGatewayProxyUrl("__openclaw/control-ui-config.json"));
   if (!res.ok) {
@@ -22,6 +24,25 @@ export async function login(
     const data = await res.json().catch(() => null);
     throw new Error(
       data?.error?.message || `Login failed with status ${res.status}`
+    );
+  }
+  return res.json();
+}
+
+export async function refreshBackendAuth(params: {
+  token: string;
+  employeeId: string;
+  employeeName?: string | null;
+}): Promise<LoginResponse> {
+  const res = await fetch(buildBackendApiUrl("auth/refresh"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(
+      data?.error?.message || `Refresh failed with status ${res.status}`
     );
   }
   return res.json();
