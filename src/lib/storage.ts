@@ -33,7 +33,7 @@ async function requestVoid(input: RequestInfo | URL, init?: RequestInit): Promis
 
 export async function loadConversations(
   employeeId: string,
-  options?: { includeAutomation?: boolean },
+  options?: { includeAutomation?: boolean; managerInstanceId?: string },
   auth?: BackendAuth,
 ): Promise<Conversation[]> {
   if (!auth?.backendToken) {
@@ -42,8 +42,12 @@ export async function loadConversations(
 
   try {
     const includeAutomation = options?.includeAutomation ? "1" : "0";
+    const params = new URLSearchParams({ includeAutomation });
+    if (options?.managerInstanceId) {
+      params.set("managerInstanceId", options.managerInstanceId);
+    }
     return await requestJson<Conversation[]>(
-      `${API_BASE}/conversations/${employeeId}?includeAutomation=${includeAutomation}`,
+      `${API_BASE}/conversations/${employeeId}?${params.toString()}`,
       {
         headers: buildAuthHeaders(auth),
       },
@@ -106,8 +110,11 @@ export function createConversation(
 ): Conversation {
   const id = `conv_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
   const ownerSegment = (ownerId || "anon").replace(/[^a-zA-Z0-9_-]/g, "_");
+  const managerSegment = (managerInstanceId || "").replace(/[^a-zA-Z0-9_-]/g, "_");
   const sessionKey = lane === "automation"
-    ? `automation:${agentId}:${id}`
+    ? managerSegment
+      ? `automation:${agentId}:${managerSegment}:${id}`
+      : `automation:${agentId}:${id}`
     : `agent:${agentId}:${ownerSegment}:${id}`;
 
   return {
@@ -121,8 +128,8 @@ export function createConversation(
     status: "active",
     createdAt: Date.now(),
     updatedAt: Date.now(),
-    // GP3: managerInstanceId co dinh sau khi tao, default ve A neu khong truyen
-    managerInstanceId: managerInstanceId || "mgr_pho_phong_A",
+    // GP3: only send managerInstanceId when the caller has an explicit login scope.
+    ...(managerInstanceId !== undefined ? { managerInstanceId } : {}),
   };
 }
 

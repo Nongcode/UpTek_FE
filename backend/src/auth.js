@@ -68,6 +68,56 @@ function normalizeEmployeeKey(value) {
   return normalized || undefined;
 }
 
+function normalizeManagerInstanceId(value) {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return undefined;
+  }
+  return /^[a-z0-9][a-z0-9_.:-]{0,127}$/i.test(normalized) ? normalized : undefined;
+}
+
+function findDirectoryEntryForEmployee(config, employeeId, employeeName) {
+  const requestedId = normalizeEmployeeKey(employeeId);
+  const requestedName = normalizeEmployeeKey(employeeName);
+  const entries = config?.gateway?.controlUi?.employeeDirectory;
+
+  if (!Array.isArray(entries)) {
+    return undefined;
+  }
+
+  return entries.find((entry) => {
+    const aliases = Array.isArray(entry.aliases) ? entry.aliases : [];
+    const candidates = [
+      normalizeEmployeeKey(entry.employeeId),
+      normalizeEmployeeKey(entry.employeeName),
+      ...aliases.map(normalizeEmployeeKey),
+    ].filter(Boolean);
+
+    return (
+      (requestedId && candidates.includes(requestedId)) ||
+      (requestedName && candidates.includes(requestedName))
+    );
+  });
+}
+
+function resolveManagerInstanceIdForEmployee(config, employeeId, employeeName) {
+  const directoryManagerInstanceId = normalizeManagerInstanceId(
+    findDirectoryEntryForEmployee(config, employeeId, employeeName)?.managerInstanceId,
+  );
+  if (directoryManagerInstanceId) {
+    return directoryManagerInstanceId;
+  }
+
+  const normalizedEmployeeId = normalizeEmployeeKey(employeeId);
+  if (normalizedEmployeeId === "pho_phong_a") {
+    return "mgr_pho_phong_A";
+  }
+  if (normalizedEmployeeId === "pho_phong_b") {
+    return "mgr_pho_phong_B";
+  }
+  return undefined;
+}
+
 function resolveAccessPolicyForEmployee(config, employeeId, employeeName) {
   const requestedId = normalizeEmployeeKey(employeeId);
   const requestedName = normalizeEmployeeKey(employeeName);
@@ -108,6 +158,7 @@ function resolveAccessPolicyForEmployee(config, employeeId, employeeName) {
         return {
           employeeId: empIdStr,
           employeeName: normalizeText(entry.employeeName) || normalizeText(employeeName),
+          managerInstanceId: normalizeManagerInstanceId(entry.managerInstanceId),
           lockedAgentId,
           lockedSessionKey: normalizeSessionKey(entry.lockedSessionKey) || `agent:${lockedAgentId}:main`,
           companyId: cId,
@@ -131,6 +182,7 @@ function resolveAccessPolicyForEmployee(config, employeeId, employeeName) {
   return {
     employeeId: normalizeText(employeeId),
     employeeName: normalizeText(employeeName),
+    managerInstanceId: undefined,
     companyId: normalizeText(employeeId),
     departmentId: normalizeText(employeeId),
     lockedAgentId: fallbackLockedAgentId,
@@ -165,6 +217,7 @@ function issueBackendToken(config, accessPolicy) {
   const payload = {
     employeeId: accessPolicy.employeeId || accessPolicy.lockedAgentId || "unknown",
     employeeName: accessPolicy.employeeName || null,
+    managerInstanceId: accessPolicy.managerInstanceId || null,
     companyId: accessPolicy.companyId || null,
     departmentId: accessPolicy.departmentId || null,
     lockedAgentId: accessPolicy.lockedAgentId || null,
@@ -247,12 +300,21 @@ function canAccessConversation(auth, conversationLike) {
   }
   const empId = normalizeText(conversationLike.employeeId);
   const aId = resolveConversationAgentId(conversationLike);
+  const conversationManagerInstanceId = normalizeManagerInstanceId(conversationLike.managerInstanceId);
+  const authManagerInstanceId = normalizeManagerInstanceId(auth.managerInstanceId);
 
   if (auth.canViewAllSessions) {
     if (auth.employeeId === "giam_doc" && (empId === "admin" || empId === "main" || aId === "main")) {
       return false;
     }
     return true;
+  }
+  if (
+    authManagerInstanceId &&
+    conversationManagerInstanceId &&
+    authManagerInstanceId !== conversationManagerInstanceId
+  ) {
+    return false;
   }
   const employeeId = normalizeText(conversationLike.employeeId);
   if (employeeId && canAccessEmployeeId(auth, employeeId)) {
@@ -282,9 +344,21 @@ async function buildLoginResponse(email, password) {
   }
 
   const matchedUser = loginAttempt.user;
-  const accessPolicy =
+  const accessPolicyBase =
     buildUserAccessPolicy(matchedUser) ||
     resolveAccessPolicyForEmployee(config, matchedUser.employeeId, matchedUser.employeeName);
+  const resolvedManagerInstanceId = resolveManagerInstanceIdForEmployee(
+    config,
+    matchedUser.employeeId,
+    matchedUser.employeeName,
+  );
+  const accessPolicy =
+    accessPolicyBase && !accessPolicyBase.managerInstanceId && resolvedManagerInstanceId
+      ? {
+          ...accessPolicyBase,
+          managerInstanceId: resolvedManagerInstanceId,
+        }
+      : accessPolicyBase;
   if (!accessPolicy) {
     return null;
   }
@@ -337,4 +411,3 @@ module.exports = {
   requireBackendAuth,
   resolveConversationAgentId,
 };
-

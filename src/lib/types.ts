@@ -47,6 +47,7 @@ export interface Template {
 export interface AccessPolicy {
   employeeId?: string;
   employeeName?: string;
+  managerInstanceId?: string;
   lockedAgentId?: string;
   lockedSessionKey?: string;
   companyId?: string;
@@ -66,6 +67,7 @@ export interface DemoLoginAccount {
   label?: string;
   employeeId?: string;
   employeeName?: string;
+  managerInstanceId?: string;
   lockedAgentId?: string;
 }
 
@@ -98,6 +100,7 @@ export interface AuthState {
   accessPolicy: AccessPolicy | null;
   employeeName: string | null;
   employeeId: string | null;
+  managerInstanceId: string | null;
 }
 
 export interface SystemUser {

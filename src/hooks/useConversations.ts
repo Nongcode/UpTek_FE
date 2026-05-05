@@ -196,6 +196,7 @@ export function useConversations({
 
   const isViewingSubordinate = viewingAgentId !== "" && viewingAgentId !== employeeId;
   const targetLoadId = isViewingSubordinate ? viewingAgentId : employeeId;
+  const managerInstanceId = accessPolicy?.managerInstanceId;
   const shouldFetch = Boolean(targetLoadId && backendToken);
   const refreshInterval = enablePolling && streamingConvIds.size === 0 ? 10000 : 0;
 
@@ -235,7 +236,7 @@ export function useConversations({
   }
 
   const swrKey = shouldFetch
-    ? `conversations:${targetLoadId}:${canUseAutomationLane ? "all" : "user"}`
+    ? `conversations:${targetLoadId}:${managerInstanceId || "default"}:${canUseAutomationLane ? "all" : "user"}`
     : null;
 
   const { data: conversations = [], mutate } = useSWR<Conversation[]>(
@@ -243,7 +244,7 @@ export function useConversations({
     async () => {
       const loaded = await loadConversations(
         targetLoadId as string,
-        { includeAutomation: canUseAutomationLane },
+        { includeAutomation: canUseAutomationLane, managerInstanceId },
         { backendToken: backendToken as string },
       );
       return loaded.map(hydrateConversationLane);
@@ -497,8 +498,10 @@ export function useConversations({
       undefined,
       laneForNewConversation,
       targetLoadId || undefined,
+      managerInstanceId,
     );
     nextConversation.employeeId = targetLoadId || undefined;
+    nextConversation.managerInstanceId = managerInstanceId || nextConversation.managerInstanceId;
 
     await applyConversations([nextConversation, ...previousConversations]);
     setActiveId(nextConversation.id);
@@ -569,11 +572,14 @@ export function useConversations({
         undefined,
         laneForConversation,
         targetLoadId || undefined,
+        managerInstanceId,
       );
       conversation.employeeId = targetLoadId || undefined;
+      conversation.managerInstanceId = managerInstanceId || conversation.managerInstanceId;
     }
 
     const conversationId = conversation.id;
+    const conversationManagerInstanceId = conversation.managerInstanceId || managerInstanceId;
     const newMessage = createMessage(
       options?.type === "manager_note" ? "manager" : "user",
       content,
@@ -586,6 +592,10 @@ export function useConversations({
     }
 
     const updatedMessages = [...conversation.messages, { ...newMessage, conversationId }];
+    const scopedMessages = updatedMessages.map((message) => ({
+      ...message,
+      managerInstanceId: message.managerInstanceId || conversationManagerInstanceId,
+    }));
     const nextTitle = conversation.messages.length === 0
       ? generateConversationTitle(updatedMessages)
       : conversation.title;
@@ -599,7 +609,8 @@ export function useConversations({
     const nextConversation: Conversation = {
       ...conversation,
       title: nextTitle,
-      messages: updatedMessages,
+      messages: scopedMessages,
+      managerInstanceId: conversationManagerInstanceId,
       status: nextStatus,
       updatedAt,
     };
@@ -617,7 +628,11 @@ export function useConversations({
           await apiCreateConversation({ ...conversation, messages: [] }, { backendToken });
         }
 
-        await persistConversationUpdate(conversationId, { title: nextTitle, status: nextStatus, updatedAt }, [newMessage]);
+        await persistConversationUpdate(
+          conversationId,
+          { title: nextTitle, status: nextStatus, updatedAt, managerInstanceId: conversationManagerInstanceId },
+          [{ ...newMessage, managerInstanceId: conversationManagerInstanceId }],
+        );
       }
     } catch {
       await applyConversations(snapshotBeforeSend);
@@ -665,7 +680,7 @@ export function useConversations({
         token,
         agentId: conversation.agentId,
         sessionKey: conversation.sessionKey,
-        messages: updatedMessages.map((message) => ({
+        messages: scopedMessages.map((message) => ({
           role: message.role,
           content: message.content,
         })),

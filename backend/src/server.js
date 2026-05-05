@@ -150,6 +150,10 @@ app.delete("/api/users/:id", requireBackendAuth, async (req, res) => {
 app.get("/api/conversations/:employeeId", requireBackendAuth, async (req, res) => {
   const { employeeId } = req.params;
   const includeAutomation = req.query.includeAutomation === "1" || req.query.includeAutomation === "true";
+  const requestedManagerInstanceId =
+    typeof req.query?.managerInstanceId === "string" && req.query.managerInstanceId.trim()
+      ? req.query.managerInstanceId.trim()
+      : undefined;
   if (!canAccessEmployeeId(req.auth, employeeId)) {
     return res.status(403).json({ error: "Forbidden" });
   }
@@ -248,6 +252,11 @@ app.get("/api/conversations/:employeeId", requireBackendAuth, async (req, res) =
         ...conversation,
         messages: msgRows.filter((message) => message.conversationId === conversation.id),
       }))
+      .filter((conversation) =>
+        requestedManagerInstanceId
+          ? conversation.managerInstanceId === requestedManagerInstanceId
+          : true,
+      )
       .filter((conversation) => canAccessConversation(req.auth, conversation));
 
     return res.json(result);
@@ -271,7 +280,7 @@ app.get("/api/conversations-global", requireBackendAuth, async (req, res) => {
 
 app.post("/api/conversations", requireBackendAuth, async (req, res) => {
   const { id, title, agentId, sessionKey, projectId, status, createdAt, updatedAt, employeeId, managerInstanceId: reqManagerInstanceId } = req.body;
-  const requestedConversation = { id, title, agentId, sessionKey, employeeId };
+  const requestedConversation = { id, title, agentId, sessionKey, employeeId, managerInstanceId: reqManagerInstanceId };
   if (!canAccessConversation(req.auth, requestedConversation)) {
     return res.status(403).json({ error: "Forbidden" });
   }
@@ -353,10 +362,18 @@ app.post("/api/messages", requireBackendAuth, async (req, res) => {
         return res.status(403).json({ error: "Forbidden" });
       }
       await client.query(
-        `INSERT INTO "Messages" ("id", "conversationId", "role", "type", "content", "timestamp")
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO "Messages" ("id", "conversationId", "role", "type", "content", "timestamp", "managerInstanceId")
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT ("id") DO UPDATE SET "content" = EXCLUDED."content"`,
-        [message.id, message.conversationId, message.role, message.type, message.content, message.timestamp],
+        [
+          message.id,
+          message.conversationId,
+          message.role,
+          message.type,
+          message.content,
+          message.timestamp,
+          conversation.managerInstanceId || message.managerInstanceId || req.auth?.managerInstanceId || null,
+        ],
       );
     }
     await client.query("COMMIT");
