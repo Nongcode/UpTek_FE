@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const DEFAULT_GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || "ws://127.0.0.1:18789";
+const DEFAULT_GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || "ws://192.168.35.210:18789";
 const DEFAULT_DEVICE_IDENTITY_PATH = path.join(os.homedir(), ".openclaw", "identity", "device.json");
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const GATEWAY_PROTOCOL_VERSION = 3;

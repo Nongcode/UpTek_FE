@@ -1,4 +1,4 @@
-import { BootstrapConfig, LoginResponse, UsersResponse } from "./types";
+import { BootstrapConfig, LoginResponse, UsersResponse } from "./types
 
 const GATEWAY_BASE = "/api/gateway";
 export const BACKEND_BASE = process.env.NEXT_PUBLIC_BACKEND_API_BASE || "/api/backend";
