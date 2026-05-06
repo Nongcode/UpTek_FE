@@ -14,7 +14,8 @@ import { canAccessAutomationLane, ChatLane } from "@/utils/chatLogic";
 type AppMode = "chat" | "dashboard";
 
 const AGENT_LABELS: Record<string, string> = {
-  nv_assistant: "Tro ly lich trinh",
+  nv_assistant: "Trợ lý kinh doanh AI",
+  pho_phong_cskh: "Phó phòng CSKH",
 };
 
 export default function Home() {
@@ -72,6 +73,22 @@ export default function Home() {
   useEffect(() => {
     if (accessPolicy?.lockedAgentId && !viewingAgentId) {
       setViewingAgentId(accessPolicy.lockedAgentId);
+    }
+  }, [accessPolicy, viewingAgentId]);
+
+  useEffect(() => {
+    if (!accessPolicy || !viewingAgentId || accessPolicy.canViewAllSessions) {
+      return;
+    }
+
+    const allowedAgentIds = new Set([
+      accessPolicy.lockedAgentId,
+      ...(accessPolicy.visibleAgentIds || []),
+    ].filter(Boolean));
+
+    if (!allowedAgentIds.has(viewingAgentId)) {
+      setViewingAgentId(accessPolicy.lockedAgentId || "");
+      setShowAgentDropdown(false);
     }
   }, [accessPolicy, viewingAgentId]);
 

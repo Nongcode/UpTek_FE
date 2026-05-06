@@ -6,12 +6,15 @@ const MANAGER_ROLES = new Set(["admin", "giam_doc"]);
 const DISABLED_STATUS = "disabled";
 const ACTIVE_STATUS = "active";
 const PHO_PHONG_REQUIRED_VISIBLE_AGENTS = ["nv_content", "nv_media", "nv_prompt"];
+const PHO_PHONG_C_EMPLOYEE_ID = "pho_phong_c";
+const CSKH_MANAGER_AGENT_ID = "pho_phong_cskh";
+const CSKH_MANAGER_REQUIRED_VISIBLE_AGENTS = ["nv_consultant"];
 const DEFAULT_ASSISTANT_USER = {
   id: "nv_assistant",
   email: "nv_assistant@uptek.ai",
   password: "100904",
   employeeId: "nv_assistant",
-  employeeName: "Trợ lý lịch trình",
+  employeeName: "Trợ lý kinh doanh AI",
   role: "nv_assistant",
   lockedAgentId: "nv_assistant",
   visibleAgentIds: ["nv_assistant"],
@@ -62,7 +65,17 @@ function isPhoPhongManager(user) {
   return normalizeAgentId(user?.lockedAgentId) === "pho_phong" || normalizeAgentId(user?.employeeId) === "pho_phong";
 }
 
+function isCskhManager(user) {
+  return (
+    normalizeAgentId(user?.lockedAgentId) === CSKH_MANAGER_AGENT_ID ||
+    normalizeAgentId(user?.employeeId) === CSKH_MANAGER_AGENT_ID
+  );
+}
+
 function getRequiredVisibleAgentIdsForUser(user) {
+  if (isCskhManager(user)) {
+    return CSKH_MANAGER_REQUIRED_VISIBLE_AGENTS;
+  }
   return isPhoPhongManager(user) ? PHO_PHONG_REQUIRED_VISIBLE_AGENTS : [];
 }
 
@@ -79,6 +92,13 @@ function resolveUserDepartment(employeeId) {
   if (employeeId === "giam_doc" || employeeId === "truong_phong") return "BanGiamDoc";
   if (employeeId === "pho_phong_cskh" || employeeId === "nv_consultant") return "PhongCSKH";
   return "PhongMarketing";
+}
+
+function resolveUserManagerInstanceId(employeeId) {
+  if (employeeId === "pho_phong_a") return "mgr_pho_phong_A";
+  if (employeeId === "pho_phong_b") return "mgr_pho_phong_B";
+  if (employeeId === "pho_phong_c") return "mgr_pho_phong_C";
+  return undefined;
 }
 
 function buildUserAccessPolicy(user) {
@@ -241,9 +261,103 @@ async function ensureDefaultAssistantUser() {
   );
 }
 
+async function ensureCskhManagerUser() {
+  const existing = await findUserByEmployeeId(CSKH_MANAGER_AGENT_ID);
+  if (!existing) {
+    await pool.query(
+      `INSERT INTO "system_users"
+        ("id", "email", "password", "employee_id", "employee_name", "role", "status",
+         "locked_agent_id", "can_view_all_sessions", "visible_agent_ids", "lock_agent",
+         "lock_session", "auto_connect")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false, $9, true, false, false)
+       ON CONFLICT ("id") DO NOTHING`,
+      [
+        CSKH_MANAGER_AGENT_ID,
+        "pho_phong_cskh@uptek.ai",
+        "100904",
+        CSKH_MANAGER_AGENT_ID,
+        "Phó phòng CSKH",
+        CSKH_MANAGER_AGENT_ID,
+        ACTIVE_STATUS,
+        CSKH_MANAGER_AGENT_ID,
+        serializeJsonArray(resolveVisibleAgentIdsForUser(
+          { employeeId: CSKH_MANAGER_AGENT_ID, lockedAgentId: CSKH_MANAGER_AGENT_ID },
+          CSKH_MANAGER_REQUIRED_VISIBLE_AGENTS,
+        )),
+      ],
+    );
+    return;
+  }
+
+  const inheritedPhoPhongAgents = new Set(["pho_phong", ...PHO_PHONG_REQUIRED_VISIBLE_AGENTS]);
+  const preservedExtraAgentIds = (existing.visibleAgentIds || []).filter(
+    (agentId) => !inheritedPhoPhongAgents.has(normalizeAgentId(agentId)),
+  );
+  const nextVisibleAgentIds = resolveVisibleAgentIdsForUser(
+    { ...existing, employeeId: CSKH_MANAGER_AGENT_ID, lockedAgentId: CSKH_MANAGER_AGENT_ID },
+    preservedExtraAgentIds,
+  );
+
+  await pool.query(
+    `UPDATE "system_users"
+     SET "locked_agent_id" = $1,
+         "visible_agent_ids" = $2,
+         "updated_at" = NOW()
+     WHERE "employee_id" = $3`,
+    [CSKH_MANAGER_AGENT_ID, serializeJsonArray(nextVisibleAgentIds), CSKH_MANAGER_AGENT_ID],
+  );
+}
+
+async function ensurePhoPhongCUser() {
+  const existing = await findUserByEmployeeId(PHO_PHONG_C_EMPLOYEE_ID);
+  const defaultVisibleAgentIds = resolveVisibleAgentIdsForUser(
+    { employeeId: PHO_PHONG_C_EMPLOYEE_ID, lockedAgentId: "pho_phong" },
+    [],
+  );
+
+  if (!existing) {
+    await pool.query(
+      `INSERT INTO "system_users"
+        ("id", "email", "password", "employee_id", "employee_name", "role", "status",
+         "locked_agent_id", "can_view_all_sessions", "visible_agent_ids", "lock_agent",
+         "lock_session", "auto_connect")
+       VALUES ($1, $2, $3, $1, $4, $1, 'active', 'pho_phong', false, $5, true, false, true)
+       ON CONFLICT ("id") DO NOTHING`,
+      [
+        PHO_PHONG_C_EMPLOYEE_ID,
+        "pho_phong_c@uptek.ai",
+        "1",
+        "Phó Phòng C KD2",
+        serializeJsonArray(defaultVisibleAgentIds),
+      ],
+    );
+    return;
+  }
+
+  await pool.query(
+    `UPDATE "system_users"
+     SET "employee_name" = $1,
+         "locked_agent_id" = 'pho_phong',
+         "visible_agent_ids" = $2,
+         "auto_connect" = true,
+         "updated_at" = NOW()
+     WHERE "employee_id" = $3`,
+    [
+      "Phó Phòng C KD2",
+      serializeJsonArray(resolveVisibleAgentIdsForUser(
+        { ...existing, employeeId: PHO_PHONG_C_EMPLOYEE_ID, lockedAgentId: "pho_phong" },
+        existing.visibleAgentIds || [],
+      )),
+      PHO_PHONG_C_EMPLOYEE_ID,
+    ],
+  );
+}
+
 async function initializeUserStore() {
   await ensureSystemUsersTable();
   await seedUsersFromConfigIfNeeded();
+  await ensurePhoPhongCUser();
+  await ensureCskhManagerUser();
   await ensureDefaultAssistantUser();
   await initializeAssistantAccessStore();
   await syncUsersToConfig();
@@ -309,6 +423,19 @@ async function findUserById(userId) {
   return result.rows[0] ? mapDbUser(result.rows[0]) : null;
 }
 
+async function findUserByEmployeeId(employeeId) {
+  const normalizedEmployeeId = normalizeText(employeeId);
+  if (!normalizedEmployeeId) {
+    return null;
+  }
+
+  const result = await pool.query(
+    `SELECT * FROM "system_users" WHERE "employee_id" = $1 LIMIT 1`,
+    [normalizedEmployeeId],
+  );
+  return result.rows[0] ? mapDbUser(result.rows[0]) : null;
+}
+
 function canManageUsers(auth) {
   return MANAGER_ROLES.has(normalizeText(auth?.employeeId) || "");
 }
@@ -350,6 +477,7 @@ function syncConfigUsers(users) {
   const employeeDirectory = nextUsers.map((user) => ({
     employeeId: user.employeeId,
     employeeName: user.employeeName,
+    ...(resolveUserManagerInstanceId(user.employeeId) ? { managerInstanceId: resolveUserManagerInstanceId(user.employeeId) } : {}),
     canViewAllSessions: user.canViewAllSessions === true,
     lockedAgentId: user.lockedAgentId,
     visibleAgentIds: user.canViewAllSessions ? [] : resolveVisibleAgentIdsForUser(user, user.visibleAgentIds),
@@ -374,7 +502,72 @@ function syncConfigUsers(users) {
     accounts: demoAccounts,
   };
 
+  ensureCskhManagerAgentConfig(config);
+
   saveOpenClawConfig(config);
+}
+
+function resolveSiblingWorkspace(config, sourceWorkspace, targetName) {
+  const normalizedSource = normalizeText(sourceWorkspace);
+  if (normalizedSource) {
+    return normalizedSource.replace(/workspace_phophong$/i, targetName).replace(/workspace$/i, targetName);
+  }
+
+  const defaultWorkspace = normalizeText(config?.agents?.defaults?.workspace);
+  if (defaultWorkspace) {
+    return defaultWorkspace.replace(/workspace$/i, targetName);
+  }
+
+  return `C:\\Users\\PHAMDUCLONG\\.openclaw\\${targetName}`;
+}
+
+function ensureCskhManagerAgentConfig(config) {
+  config.agents = config.agents || {};
+  config.agents.list = Array.isArray(config.agents.list) ? config.agents.list : [];
+
+  const agentList = config.agents.list;
+  const existingAgent = agentList.find((agent) => normalizeAgentId(agent?.id) === CSKH_MANAGER_AGENT_ID);
+  const phoPhongAgent = agentList.find((agent) => normalizeAgentId(agent?.id) === "pho_phong");
+  const baseAgent = existingAgent || {};
+  const allowAgents = Array.from(new Set([
+    ...((Array.isArray(baseAgent.subagents?.allowAgents) ? baseAgent.subagents.allowAgents : [])),
+    ...CSKH_MANAGER_REQUIRED_VISIBLE_AGENTS,
+  ].map(normalizeAgentId).filter(Boolean)));
+
+  const nextAgent = {
+    ...baseAgent,
+    id: CSKH_MANAGER_AGENT_ID,
+    name: baseAgent.name || "Phó phòng CSKH",
+    workspace: baseAgent.workspace || resolveSiblingWorkspace(config, phoPhongAgent?.workspace, "workspace_phophong_cskh"),
+    model: baseAgent.model || phoPhongAgent?.model || config.agents.defaults?.model?.primary || "openai-codex/gpt-5.4",
+    skills: Array.isArray(baseAgent.skills) && baseAgent.skills.length > 0
+      ? baseAgent.skills
+      : ["agent-orchestrator", "search-product-text"],
+    identity: {
+      ...(baseAgent.identity || {}),
+      name: baseAgent.identity?.name || "Phó phòng CSKH UpTek",
+    },
+    subagents: {
+      ...(baseAgent.subagents || {}),
+      allowAgents,
+    },
+    tools: {
+      profile: "full",
+      ...(baseAgent.tools || {}),
+    },
+  };
+
+  if (existingAgent) {
+    Object.assign(existingAgent, nextAgent);
+    return;
+  }
+
+  const phoPhongIndex = agentList.findIndex((agent) => normalizeAgentId(agent?.id) === "pho_phong");
+  if (phoPhongIndex >= 0) {
+    agentList.splice(phoPhongIndex + 1, 0, nextAgent);
+  } else {
+    agentList.push(nextAgent);
+  }
 }
 
 async function syncUsersToConfig() {
@@ -470,7 +663,7 @@ async function removeVisibleAgentFromUser(userId, agentId, auth) {
   }
 
   if (getRequiredVisibleAgentIdsForUser(target).includes(normalizedAgentId)) {
-    const error = new Error("Cannot remove default pho_phong workers");
+    const error = new Error("Cannot remove default manager workers");
     error.statusCode = 400;
     throw error;
   }
@@ -500,6 +693,7 @@ module.exports = {
   canManageUsers,
   deleteUser,
   findUserByCredentials,
+  findUserByEmployeeId,
   findUserById,
   getLoginAttemptResult,
   initializeUserStore,

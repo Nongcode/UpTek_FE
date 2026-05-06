@@ -6,6 +6,7 @@ const mediaConfig = require("./config/media");
 const createMediaLegacyRoutes = require("./routes/mediaLegacyRoutes");
 const mediaRoutes = require("./routes/mediaRoutes");
 const {
+  buildCurrentAuthResponse,
   buildLoginResponse,
   canAccessConversation,
   canAccessEmployeeId,
@@ -122,6 +123,14 @@ app.post("/api/auth/login", async (req, res) => {
   return res.json(result);
 });
 
+app.get("/api/auth/me", requireBackendAuth, async (req, res) => {
+  const result = await buildCurrentAuthResponse(req.auth);
+  if (!result) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  return res.json(result);
+});
+
 app.get("/api/users", requireBackendAuth, async (req, res) => {
   if (!canManageUsers(req.auth)) {
     return res.status(403).json({ error: "Forbidden" });
@@ -148,7 +157,7 @@ app.patch("/api/users/:id/status", requireBackendAuth, async (req, res) => {
 app.post("/api/users/:id/visible-agents", requireBackendAuth, async (req, res) => {
   try {
     const user = await addVisibleAgentToUser(req.params.id, req.body?.agentId, req.auth);
-    if (req.body?.agentId === "nv_assistant") {
+    if (normalizeAgentId(req.body?.agentId) === "nv_assistant") {
       await setAssistantAccess(user.employeeId, true, req.auth?.employeeId || "system");
     }
     return res.json({ success: true, user });
@@ -160,6 +169,9 @@ app.post("/api/users/:id/visible-agents", requireBackendAuth, async (req, res) =
 app.delete("/api/users/:id/visible-agents/:agentId", requireBackendAuth, async (req, res) => {
   try {
     const user = await removeVisibleAgentFromUser(req.params.id, req.params.agentId, req.auth);
+    if (normalizeAgentId(req.params.agentId) === "nv_assistant") {
+      await setAssistantAccess(user.employeeId, false, req.auth?.employeeId || "system");
+    }
     return res.json({ success: true, user });
   } catch (err) {
     return res.status(err.statusCode || 500).json({ error: err.message });

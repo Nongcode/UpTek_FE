@@ -142,11 +142,16 @@ const pool = require('./src/database');
       VALUES ('mgr_pho_phong_B', 'pho_phong', 'Phó Phòng B (Experimental)', 'experimental')
       ON CONFLICT ("id") DO NOTHING
     `);
+    await pool.query(`
+      INSERT INTO "manager_instances" ("id", "baseAgentKey", "label", "status")
+      VALUES ('mgr_pho_phong_C', 'pho_phong', 'Pho Phong C (KD2)', 'active')
+      ON CONFLICT ("id") DO NOTHING
+    `);
 
     // ─── GP3: Seed worker bindings ────────────────────────────────────────────
-    // Cả A và B cùng share 3 workers (shared workers, context được truyền qua payload)
+    // A, B, and C share the same worker templates; payload context keeps each lane isolated.
     const workerAgents = ['nv_content', 'nv_media', 'nv_prompt'];
-    const managerIds = ['mgr_pho_phong_A', 'mgr_pho_phong_B'];
+    const managerIds = ['mgr_pho_phong_A', 'mgr_pho_phong_B', 'mgr_pho_phong_C'];
     for (const mgrId of managerIds) {
       for (const workerId of workerAgents) {
         await pool.query(`
@@ -242,6 +247,12 @@ const pool = require('./src/database');
       ['assistant.reminder.email', 'Tao nhac lich bang email den email dang nhap cua user.', true],
       ['assistant.travel.mock_eta', 'Mo phong thoi gian di chuyen khi chua cau hinh Google Maps API.', true],
       ['assistant.calendar.write', 'Tao hoac sua lich that tren he thong lich ngoai.', false],
+      ['assistant.product.analysis', 'Phan tich san pham, USP, diem manh, diem yeu va thong tin can xac minh.', true],
+      ['assistant.market.analysis', 'Phan tich thi truong Viet Nam, phan khuc khach hang, B2B/B2C, mua vu va khu vuc.', true],
+      ['assistant.competitor.analysis', 'Phan tich doi thu truc tiep, gian tiep va khoang trong thi truong.', true],
+      ['assistant.sales.plan', 'Lap ke hoach ban hang chi tiet de user duyet.', true],
+      ['assistant.facebook.promotion.plan', 'Lap ke hoach quang ba Facebook chi tiet cho san pham.', true],
+      ['assistant.web.search', 'Tim kiem web de bo sung tin hieu thi truong va doi thu khi co cau hinh API key.', true],
     ];
     for (const [capability, description, defaultEnabled] of assistantCapabilities) {
       await pool.query(`
@@ -266,7 +277,7 @@ const pool = require('./src/database');
       `, [employeeId]);
     }
 
-    for (const employeeId of ['pho_phong_a', 'pho_phong_b']) {
+    for (const employeeId of ['pho_phong_a', 'pho_phong_b', 'pho_phong_c']) {
       await pool.query(`
         INSERT INTO "UserAgentAccess" ("employeeId", "agentId", "enabled", "grantedBy")
         VALUES ($1, 'nv_assistant', false, 'system')
@@ -277,7 +288,7 @@ const pool = require('./src/database');
     console.log('Migration completed successfully');
     console.log('GP3: manager_instances and manager_worker_bindings tables created.');
     console.log('GP3: managerInstanceId column added to Conversations and Messages.');
-    console.log('GP3: Seeded mgr_pho_phong_A (active) and mgr_pho_phong_B (experimental).');
+    console.log('GP3: Seeded mgr_pho_phong_A (active), mgr_pho_phong_B (experimental), and mgr_pho_phong_C (KD2 active).');
     console.log('Assistant: nv_assistant access, capability, schedule, and reminder tables created.');
   } catch(e) {
     console.error('Migration error:', e.message);

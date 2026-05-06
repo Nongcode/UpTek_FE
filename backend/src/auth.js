@@ -2,7 +2,7 @@ require("dotenv").config();
 const crypto = require("crypto");
 const { getEnabledAgentIdsForEmployee } = require("./assistant-access");
 const { loadOpenClawConfig } = require("./openclaw-config");
-const { buildUserAccessPolicy, getLoginAttemptResult } = require("./user-management");
+const { buildUserAccessPolicy, findUserByEmployeeId, getLoginAttemptResult } = require("./user-management");
 // GP3: import isManagerAgent để check agent type động, không hardcode
 const { isManagerAgent } = require("./manager-instances");
 
@@ -115,6 +115,9 @@ function resolveManagerInstanceIdForEmployee(config, employeeId, employeeName) {
   }
   if (normalizedEmployeeId === "pho_phong_b") {
     return "mgr_pho_phong_B";
+  }
+  if (normalizedEmployeeId === "pho_phong_c") {
+    return "mgr_pho_phong_C";
   }
   return undefined;
 }
@@ -359,6 +362,21 @@ async function buildLoginResponse(email, password) {
   }
 
   const matchedUser = loginAttempt.user;
+  const accessPolicy = await buildCurrentAccessPolicy(config, matchedUser);
+  if (!accessPolicy) {
+    return null;
+  }
+
+  return {
+    ok: true,
+    token: normalizeText(config?.gateway?.auth?.token) || null,
+    backendToken: issueBackendToken(config, accessPolicy),
+    accessPolicy,
+    bootstrapConfig: config?.gateway?.controlUi || null,
+  };
+}
+
+async function buildCurrentAccessPolicy(config, matchedUser) {
   const accessPolicyBase =
     buildUserAccessPolicy(matchedUser) ||
     resolveAccessPolicyForEmployee(config, matchedUser.employeeId, matchedUser.employeeName);
@@ -375,6 +393,17 @@ async function buildLoginResponse(email, password) {
         }
       : accessPolicyBase;
   const accessPolicy = await withEnabledPersonalAgents(baseAccessPolicy);
+  return accessPolicy || null;
+}
+
+async function buildCurrentAuthResponse(authPayload) {
+  const config = loadOpenClawConfig();
+  const matchedUser = await findUserByEmployeeId(authPayload?.employeeId);
+  if (!matchedUser || matchedUser.status === "disabled") {
+    return null;
+  }
+
+  const accessPolicy = await buildCurrentAccessPolicy(config, matchedUser);
   if (!accessPolicy) {
     return null;
   }
@@ -419,6 +448,7 @@ function optionalBackendAuth(req, res, next) {
 }
 
 module.exports = {
+  buildCurrentAuthResponse,
   buildLoginResponse,
   canAccessConversation,
   canAccessEmployeeId,

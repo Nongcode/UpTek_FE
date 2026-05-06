@@ -1,5 +1,25 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
 
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+
 :root {
   --bg-dark: #0f172a;
   --bg-panel: rgba(30, 41, 59, 0.7);
@@ -27,6 +47,8 @@
   --docs-btn-bg: rgba(30, 41, 59, 0.5);
   --version-badge-bg: rgba(15, 23, 42, 0.4);
   --sidebar-item-hover: var(--bg-hover);
+  --bg-dropdown: rgba(15, 23, 42, 0.95);
+  --dropdown-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
 }
 
 /* Light theme overrides - toggled with html[data-theme="light"] */
@@ -53,6 +75,8 @@ html[data-theme="light"] {
   --docs-btn-bg: rgba(255, 255, 255, 0.8);
   --version-badge-bg: #ffffff;
   --sidebar-item-hover: rgba(99, 102, 241, 0.05);
+  --bg-dropdown: rgba(255, 255, 255, 0.95);
+  --dropdown-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
 }
 
 * {
@@ -220,11 +244,11 @@ body {
   position: absolute;
   top: calc(100% + 12px);
   left: 0;
-  background: rgba(15, 23, 42, 0.9);
+  background: var(--bg-dropdown);
   backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-color);
   border-radius: 16px;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--dropdown-shadow);
   width: 320px;
   max-width: calc(100vw - 32px);
   max-height: 400px;
@@ -246,10 +270,10 @@ body {
   left: 20px;
   width: 12px;
   height: 12px;
-  background: rgba(15, 23, 42, 0.9);
+  background: var(--bg-dropdown);
   transform: rotate(45deg);
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 1px solid var(--border-color);
+  border-top: 1px solid var(--border-color);
   z-index: -1;
 }
 
@@ -729,13 +753,13 @@ body {
   top: calc(100% + 12px);
   right: 0;
   width: 480px;
-  background: rgba(15, 23, 42, 0.9);
+  background: var(--bg-dropdown);
   backdrop-filter: blur(24px);
-  border: 1px solid rgba(99, 102, 241, 0.2);
+  border: 1px solid var(--border-color);
   border-radius: 20px;
   padding: 1.25rem;
   z-index: 1000;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--dropdown-shadow);
 }
 
 .dropdown-filter-header {
@@ -1564,14 +1588,14 @@ body {
 }
 
 .agent-option:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bg-hover);
   transform: translateX(4px);
 }
 
 .agent-option.selected {
-  background: linear-gradient(135deg, rgba(129, 140, 248, 0.2), rgba(192, 132, 252, 0.2));
-  border: 1px solid rgba(129, 140, 248, 0.3);
-  color: #fff;
+  background: var(--active-bg);
+  border: 1px solid var(--accent-ring);
+  color: var(--accent-primary);
 }
 
 .agent-option-avatar {
@@ -1583,8 +1607,9 @@ body {
   align-items: center;
   justify-content: center;
   font-weight: 600;
+  color: #ffffff;
   margin-right: 0.75rem;
-  box-shadow: 0 4px 12px rgba(129, 140, 248, 0.3);
+  box-shadow: 0 4px 12px var(--accent-ring);
 }
 
 .agent-option-info {
@@ -2504,12 +2529,18 @@ html[data-theme="light"] .search-modal {
   max-width: 80%;
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .message-row.user .message-content-wrapper,
 .message-row.manager .message-content-wrapper,
 .message-row.system .message-content-wrapper {
   align-items: flex-end;
+}
+
+.message-row.assistant .message-content-wrapper {
+  width: min(100%, 980px);
+  max-width: calc(100% - 3rem);
 }
 
 .message-sender {
@@ -2539,6 +2570,7 @@ html[data-theme="light"] .search-modal {
   background: transparent;
   color: var(--text-primary);
   padding: 0.5rem 0;
+  width: 100%;
 }
 
 .message-bubble.user,
@@ -2607,6 +2639,81 @@ h4.md-heading {
 
 .md-spacer {
   height: 1rem;
+}
+
+.md-paragraph {
+  margin: 0 0 0.8rem;
+}
+
+.md-paragraph:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body {
+  width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.md-table-scroll {
+  width: min(100%, calc(100vw - 2rem));
+  margin: 1rem 0 1.25rem;
+  overflow-x: auto;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.72);
+  box-shadow: 0 14px 30px rgba(2, 6, 23, 0.2);
+}
+
+.md-table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.md-table th,
+.md-table td {
+  padding: 0.8rem 0.9rem;
+  text-align: left;
+  vertical-align: top;
+  border-right: 1px solid rgba(148, 163, 184, 0.16);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.md-table th:last-child,
+.md-table td:last-child {
+  border-right: 0;
+}
+
+.md-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.md-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: #dbeafe;
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  background: rgba(30, 41, 59, 0.98);
+}
+
+.md-table td {
+  color: rgba(248, 250, 252, 0.92);
+  background: rgba(15, 23, 42, 0.5);
+}
+
+.md-table tbody tr:nth-child(even) td {
+  background: rgba(30, 41, 59, 0.42);
+}
+
+.md-table tbody tr:hover td {
+  background: rgba(49, 62, 96, 0.5);
 }
 
 .inline-code {

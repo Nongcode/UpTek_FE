@@ -35,6 +35,19 @@ export async function login(
   return res.json();
 }
 
+export async function fetchCurrentAuth(
+  backendToken: string,
+): Promise<LoginResponse> {
+  const res = await fetch(`${BACKEND_BASE}/auth/me`, {
+    headers: buildBackendAuthHeaders(backendToken),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.error?.message || data?.error || `Refresh auth failed with status ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function fetchUsers(backendToken: string): Promise<UsersResponse> {
   const res = await fetch(`${BACKEND_BASE}/users`, {
     headers: buildBackendAuthHeaders(backendToken),

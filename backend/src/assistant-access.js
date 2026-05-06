@@ -23,6 +23,36 @@ const DEFAULT_CAPABILITIES = [
     description: "Tao hoac sua lich that tren he thong lich ngoai.",
     defaultEnabled: false,
   },
+  {
+    capability: "assistant.product.analysis",
+    description: "Phan tich san pham, USP, diem manh, diem yeu va thong tin can xac minh.",
+    defaultEnabled: true,
+  },
+  {
+    capability: "assistant.market.analysis",
+    description: "Phan tich thi truong Viet Nam, phan khuc khach hang, B2B/B2C, mua vu va khu vuc.",
+    defaultEnabled: true,
+  },
+  {
+    capability: "assistant.competitor.analysis",
+    description: "Phan tich doi thu truc tiep, gian tiep va khoang trong thi truong.",
+    defaultEnabled: true,
+  },
+  {
+    capability: "assistant.sales.plan",
+    description: "Lap ke hoach ban hang chi tiet de user duyet.",
+    defaultEnabled: true,
+  },
+  {
+    capability: "assistant.facebook.promotion.plan",
+    description: "Lap ke hoach quang ba Facebook chi tiet cho san pham.",
+    defaultEnabled: true,
+  },
+  {
+    capability: "assistant.web.search",
+    description: "Tim kiem web de bo sung tin hieu thi truong va doi thu khi co cau hinh API key.",
+    defaultEnabled: true,
+  },
 ];
 
 async function ensureAssistantTables() {
@@ -144,7 +174,7 @@ async function seedAssistantAccessDefaults() {
     );
   }
 
-  for (const employeeId of ["pho_phong_a", "pho_phong_b"]) {
+  for (const employeeId of ["pho_phong_a", "pho_phong_b", "pho_phong_c"]) {
     await pool.query(
       `INSERT INTO "UserAgentAccess" ("employeeId", "agentId", "enabled", "grantedBy")
        VALUES ($1, $2, false, 'system')

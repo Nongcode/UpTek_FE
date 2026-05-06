@@ -87,7 +87,30 @@ function renderMarkdown(text: string): React.ReactNode[] {
     return parts;
   };
 
-  for (const line of lines) {
+  const parseTableCells = (line: string): string[] =>
+    line
+      .trim()
+      .replace(/^\|/, "")
+      .replace(/\|$/, "")
+      .split("|")
+      .map((cell) => cell.trim());
+
+  const isTableRow = (line: string): boolean => {
+    const trimmed = line.trim();
+    return trimmed.startsWith("|") && trimmed.endsWith("|") && trimmed.split("|").length >= 4;
+  };
+
+  const isTableSeparator = (line: string): boolean => {
+    if (!isTableRow(line)) {
+      return false;
+    }
+
+    return parseTableCells(line).every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+  };
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
+
     if (line.startsWith("```")) {
       if (inCodeBlock) {
         elements.push(
@@ -126,6 +149,48 @@ function renderMarkdown(text: string): React.ReactNode[] {
       continue;
     }
 
+    if (
+      isTableRow(line) &&
+      lineIndex + 1 < lines.length &&
+      isTableSeparator(lines[lineIndex + 1])
+    ) {
+      const headers = parseTableCells(line);
+      const rows: string[][] = [];
+      lineIndex += 2;
+
+      while (lineIndex < lines.length && isTableRow(lines[lineIndex])) {
+        rows.push(parseTableCells(lines[lineIndex]));
+        lineIndex += 1;
+      }
+      lineIndex -= 1;
+
+      elements.push(
+        <div key={`table-${blockIndex++}`} className="md-table-scroll">
+          <table className="md-table">
+            <thead>
+              <tr>
+                {headers.map((header, headerIndex) => (
+                  <th key={`th-${headerIndex}`}>{processInline(header)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, rowIndex) => (
+                <tr key={`tr-${rowIndex}`}>
+                  {headers.map((_, cellIndex) => (
+                    <td key={`td-${rowIndex}-${cellIndex}`}>
+                      {processInline(row[cellIndex] ?? "")}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>,
+      );
+      continue;
+    }
+
     if (line.startsWith("### ")) {
       elements.push(
         <h4 key={`h-${blockIndex++}`} className="md-heading">
@@ -156,7 +221,7 @@ function renderMarkdown(text: string): React.ReactNode[] {
     if (/^[-*] /.test(line)) {
       elements.push(
         <div key={`li-${blockIndex++}`} className="md-list-item">
-          <span className="md-bullet">•</span>
+          <span className="md-bullet">{"\u2022"}</span>
           <span>{processInline(line.slice(2))}</span>
         </div>,
       );

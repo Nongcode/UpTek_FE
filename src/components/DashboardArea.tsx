@@ -51,15 +51,28 @@ const AGENT_FUNCTION_SUMMARIES: Record<string, string> = {
   nv_media: "Sáng tạo hình ảnh và video chuyên nghiệp bằng trí tuệ nhân tạo (AI).",
   nv_prompt: "Thiết kế và tinh chỉnh cấu trúc câu lệnh tối ưu cho các mô hình ngôn ngữ.",
   nv_consultant: "Tư vấn khách hàng, giải đáp thắc mắc và tra cứu thông tin sản phẩm.",
-  nv_assistant: "Quản lý lịch trình làm việc, gửi email tự động và hỗ trợ điều phối.",
+  nv_assistant: "Trợ lý kinh doanh AI: phân tích sản phẩm, thị trường, đối thủ, lập kế hoạch bán hàng và quảng bá Facebook.",
   pho_phong: "Điều hành nhóm nhân viên, phê duyệt yêu cầu và quản lý luồng công việc.",
+  pho_phong_cskh: "Quản lý nhóm CSKH, điều phối và duyệt tư vấn từ nv_consultant.",
   main: "Agent đa nhiệm xử lý các tác vụ tổng quát trên toàn hệ thống.",
   giam_doc: "Giám sát toàn bộ hoạt động hệ thống và đưa ra các quyết định chiến lược.",
 };
 
 const PHO_PHONG_REQUIRED_AGENTS = ["nv_content", "nv_media", "nv_prompt"];
+const CSKH_MANAGER_REQUIRED_AGENTS = ["nv_consultant"];
 
 function resolveSalesDepartment(normalizedText: string) {
+  if (
+    /\bkd[\s_-]*2\b/.test(normalizedText)
+    || /\bkinh doanh[\s_-]*2\b/.test(normalizedText)
+    || /\btruong[_\s-]*phong[_\s-]*kd[\s_-]*2\b/.test(normalizedText)
+    || /\bpho[_\s-]*phong[_\s-]*3\b/.test(normalizedText)
+    || /\bpho[_\s-]*phong[_\s-]*4\b/.test(normalizedText)
+    || /\bpho[_\s-]*phong[_\s-]*c\b/.test(normalizedText)
+  ) {
+    return "sales-2";
+  }
+
   if (
     /\bkd[\s_-]*1\b/.test(normalizedText)
     || /\bkinh doanh[\s_-]*1\b/.test(normalizedText)
@@ -70,16 +83,6 @@ function resolveSalesDepartment(normalizedText: string) {
     || /\bpho[_\s-]*phong[_\s-]*2\b/.test(normalizedText)
   ) {
     return "sales-1";
-  }
-
-  if (
-    /\bkd[\s_-]*2\b/.test(normalizedText)
-    || /\bkinh doanh[\s_-]*2\b/.test(normalizedText)
-    || /\btruong[_\s-]*phong[_\s-]*kd[\s_-]*2\b/.test(normalizedText)
-    || /\bpho[_\s-]*phong[_\s-]*3\b/.test(normalizedText)
-    || /\bpho[_\s-]*phong[_\s-]*4\b/.test(normalizedText)
-  ) {
-    return "sales-2";
   }
 
   return "";
@@ -194,15 +197,22 @@ function isElevatedManager(user: SystemUser) {
 }
 
 function isPeerManagerForDeputy(user: SystemUser) {
-  const joined = normalizeKeyword(
-    [user.employeeId, user.employeeName, user.role, user.lockedAgentId].filter(Boolean).join(" "),
-  );
+  const employeeId = normalizeAgentId(user.employeeId);
+  const role = normalizeAgentId(user.role);
+  const lockedAgentId = normalizeAgentId(user.lockedAgentId);
 
   return (
-    /\badmin\b/.test(joined)
-    || /\bgiam[_\s-]*doc\b/.test(joined)
-    || /\btruong[_\s-]*phong\b/.test(joined)
-    || /\bpho[_\s-]*phong\b/.test(joined)
+    employeeId === "admin"
+    || employeeId === "giam_doc"
+    || employeeId === "truong_phong"
+    || employeeId.startsWith("pho_phong")
+    || role === "admin"
+    || role === "giam_doc"
+    || role === "truong_phong"
+    || role.startsWith("pho_phong")
+    || lockedAgentId === "main"
+    || lockedAgentId === "pho_phong"
+    || lockedAgentId === "pho_phong_cskh"
   );
 }
 
@@ -216,7 +226,14 @@ function isPhoPhongManager(user: SystemUser) {
   return normalizeAgentId(user.lockedAgentId) === "pho_phong" || normalizeAgentId(user.employeeId) === "pho_phong";
 }
 
+function isCskhManager(user: SystemUser) {
+  return normalizeAgentId(user.lockedAgentId) === "pho_phong_cskh" || normalizeAgentId(user.employeeId) === "pho_phong_cskh";
+}
+
 function resolveRequiredManagerAgents(manager: SystemUser) {
+  if (isCskhManager(manager)) {
+    return CSKH_MANAGER_REQUIRED_AGENTS;
+  }
   return isPhoPhongManager(manager) ? PHO_PHONG_REQUIRED_AGENTS : [];
 }
 
@@ -231,9 +248,7 @@ function canRemoveManagedAgent(manager: SystemUser, agentId: string) {
 function resolveManagerSubordinates(manager: SystemUser, users: SystemUser[]) {
   const managerKey = normalizeKeyword(manager.employeeId);
   const managerRoleKey = normalizeKeyword(manager.role);
-  const isDeputyManager =
-    /\bpho[_\s-]*phong\b/.test(managerKey)
-    || /\bpho[_\s-]*phong\b/.test(managerRoleKey);
+  const isDeputyManager = isPhoPhongManager(manager) || isCskhManager(manager);
   const visibleIds = new Set(
     [manager.lockedAgentId, ...resolveRequiredManagerAgents(manager), ...(manager.visibleAgentIds || [])]
       .map((item) => normalizeKeyword(item))
@@ -518,7 +533,7 @@ export default function DashboardArea({ backendToken }: { backendToken: string |
   async function handleRemoveVisibleAgent(agentId: string) {
     if (!backendToken || !selectedManagerDetail) return;
     if (!canRemoveManagedAgent(selectedManagerDetail.manager, agentId)) {
-      setUserActionError("Không thể gỡ agent mặc định của pho_phong hoặc agent chính của tài khoản.");
+      setUserActionError("Không thể gỡ agent mặc định của quản lý hoặc agent chính của tài khoản.");
       return;
     }
     const confirmed = window.confirm(

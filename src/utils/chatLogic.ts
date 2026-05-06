@@ -26,6 +26,7 @@ const AUTOMATION_ALWAYS_ALLOWED_ROLES = new Set([
  */
 const MANAGER_BASE_AGENT_KEYS = new Set([
   "pho_phong",
+  "pho_phong_cskh",
   // Thêm manager agents mới ở đây khi cần
 ]);
 
