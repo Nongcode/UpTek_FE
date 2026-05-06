@@ -13,6 +13,10 @@ import { canAccessAutomationLane, ChatLane } from "@/utils/chatLogic";
 
 type AppMode = "chat" | "dashboard";
 
+const AGENT_LABELS: Record<string, string> = {
+  nv_assistant: "Tro ly lich trinh",
+};
+
 export default function Home() {
   const router = useRouter();
   const {
@@ -130,6 +134,28 @@ export default function Home() {
       employeeName: account.employeeName,
     }))
     .filter((account) => account.lockedAgentId);
+
+  const appendMissingVisibleAgents = (agentIds: string[]) => {
+    const existing = new Set(availableAgents.map((account) => account.lockedAgentId));
+    for (const agentId of agentIds) {
+      if (!agentId || existing.has(agentId)) {
+        continue;
+      }
+      availableAgents.push({
+        lockedAgentId: agentId,
+        label: AGENT_LABELS[agentId] || (agentId === accessPolicy?.lockedAgentId ? (employeeName || agentId) : agentId),
+        employeeName: AGENT_LABELS[agentId] || agentId,
+      });
+      existing.add(agentId);
+    }
+  };
+
+  if (accessPolicy) {
+    appendMissingVisibleAgents([
+      accessPolicy.lockedAgentId || "",
+      ...(accessPolicy.visibleAgentIds || []),
+    ]);
+  }
 
   if (!accessPolicy?.canViewAllSessions) {
     const visibleIds = accessPolicy?.visibleAgentIds || [];

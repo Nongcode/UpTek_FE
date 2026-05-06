@@ -1,5 +1,6 @@
 require("dotenv").config();
 const crypto = require("crypto");
+const { getEnabledAgentIdsForEmployee } = require("./assistant-access");
 const { loadOpenClawConfig } = require("./openclaw-config");
 const { buildUserAccessPolicy, getLoginAttemptResult } = require("./user-management");
 // GP3: import isManagerAgent để check agent type động, không hardcode
@@ -327,6 +328,20 @@ function canAccessConversation(auth, conversationLike) {
   return resolveAllowedAgentIds(auth).includes(agentId);
 }
 
+async function withEnabledPersonalAgents(accessPolicy) {
+  if (!accessPolicy?.employeeId) {
+    return accessPolicy;
+  }
+  const enabledAgentIds = await getEnabledAgentIdsForEmployee(accessPolicy.employeeId);
+  if (enabledAgentIds.length === 0) {
+    return accessPolicy;
+  }
+  return {
+    ...accessPolicy,
+    visibleAgentIds: dedupeAgentIds([...(accessPolicy.visibleAgentIds || []), ...enabledAgentIds]),
+  };
+}
+
 async function buildLoginResponse(email, password) {
   const config = loadOpenClawConfig();
   const loginAttempt = await getLoginAttemptResult(email, password);
@@ -352,13 +367,14 @@ async function buildLoginResponse(email, password) {
     matchedUser.employeeId,
     matchedUser.employeeName,
   );
-  const accessPolicy =
+  const baseAccessPolicy =
     accessPolicyBase && !accessPolicyBase.managerInstanceId && resolvedManagerInstanceId
       ? {
           ...accessPolicyBase,
           managerInstanceId: resolvedManagerInstanceId,
         }
       : accessPolicyBase;
+  const accessPolicy = await withEnabledPersonalAgents(baseAccessPolicy);
   if (!accessPolicy) {
     return null;
   }
@@ -368,6 +384,7 @@ async function buildLoginResponse(email, password) {
     token: normalizeText(config?.gateway?.auth?.token) || null,
     backendToken: issueBackendToken(config, accessPolicy),
     accessPolicy,
+    bootstrapConfig: config?.gateway?.controlUi || null,
   };
 }
 

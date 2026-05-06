@@ -72,6 +72,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setError(null);
     try {
       const result = await apiLogin(email, password);
+      if (result.bootstrapConfig) {
+        setBootstrapConfig(result.bootstrapConfig);
+      }
       const newAuth: AuthState = {
         isAuthenticated: true,
         token: result.token || null,

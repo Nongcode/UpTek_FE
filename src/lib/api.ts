@@ -1,4 +1,4 @@
-import { BootstrapConfig, LoginResponse, UsersResponse } from "./types
+import { AssistantAccessEntry, AssistantAccessResponse, BootstrapConfig, LoginResponse, UsersResponse } from "./types";
 
 const GATEWAY_BASE = "/api/gateway";
 export const BACKEND_BASE = process.env.NEXT_PUBLIC_BACKEND_API_BASE || "/api/backend";
@@ -65,6 +65,40 @@ export async function updateUserStatus(
   }
 }
 
+export async function addVisibleAgentToUser(
+  backendToken: string,
+  userId: string,
+  agentId: string,
+): Promise<void> {
+  const res = await fetch(`${BACKEND_BASE}/users/${userId}/visible-agents`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildBackendAuthHeaders(backendToken),
+    },
+    body: JSON.stringify({ agentId }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.error || `Add visible agent failed with status ${res.status}`);
+  }
+}
+
+export async function removeVisibleAgentFromUser(
+  backendToken: string,
+  userId: string,
+  agentId: string,
+): Promise<void> {
+  const res = await fetch(`${BACKEND_BASE}/users/${userId}/visible-agents/${encodeURIComponent(agentId)}`, {
+    method: "DELETE",
+    headers: buildBackendAuthHeaders(backendToken),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.error || `Remove visible agent failed with status ${res.status}`);
+  }
+}
+
 export async function deleteUser(backendToken: string, userId: string): Promise<void> {
   const res = await fetch(`${BACKEND_BASE}/users/${userId}`, {
     method: "DELETE",
@@ -74,6 +108,40 @@ export async function deleteUser(backendToken: string, userId: string): Promise<
     const data = await res.json().catch(() => null);
     throw new Error(data?.error || `Delete user failed with status ${res.status}`);
   }
+}
+
+export async function fetchAssistantAccess(
+  backendToken: string,
+): Promise<AssistantAccessResponse> {
+  const res = await fetch(`${BACKEND_BASE}/assistant/access`, {
+    headers: buildBackendAuthHeaders(backendToken),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.error || `Load assistant access failed with status ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateAssistantAccess(
+  backendToken: string,
+  employeeId: string,
+  enabled: boolean,
+): Promise<AssistantAccessEntry> {
+  const res = await fetch(`${BACKEND_BASE}/assistant/access/${employeeId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...buildBackendAuthHeaders(backendToken),
+    },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.error || `Update assistant access failed with status ${res.status}`);
+  }
+  const data = await res.json();
+  return data.access;
 }
 
 export interface ChatCompletionOptions {

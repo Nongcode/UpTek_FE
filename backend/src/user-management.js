@@ -1,9 +1,21 @@
 const pool = require("./database");
+const { initializeAssistantAccessStore } = require("./assistant-access");
 const { deepClone, loadOpenClawConfig, saveOpenClawConfig } = require("./openclaw-config");
 
 const MANAGER_ROLES = new Set(["admin", "giam_doc"]);
 const DISABLED_STATUS = "disabled";
 const ACTIVE_STATUS = "active";
+const PHO_PHONG_REQUIRED_VISIBLE_AGENTS = ["nv_content", "nv_media", "nv_prompt"];
+const DEFAULT_ASSISTANT_USER = {
+  id: "nv_assistant",
+  email: "nv_assistant@uptek.ai",
+  password: "100904",
+  employeeId: "nv_assistant",
+  employeeName: "Trợ lý lịch trình",
+  role: "nv_assistant",
+  lockedAgentId: "nv_assistant",
+  visibleAgentIds: ["nv_assistant"],
+};
 
 function normalizeText(value) {
   const normalized = String(value || "").trim();
@@ -19,7 +31,8 @@ function normalizeAgentId(value) {
   if (!normalized) {
     return undefined;
   }
-  return /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(normalized) ? normalized : undefined;
+  const normalizedAlias = normalized === "nv_promt" ? "nv_prompt" : normalized;
+  return /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(normalizedAlias) ? normalizedAlias : undefined;
 }
 
 function parseJsonArray(value) {
@@ -41,6 +54,26 @@ function serializeJsonArray(value) {
   return JSON.stringify(Array.isArray(value) ? value : []);
 }
 
+function dedupeAgentIds(value) {
+  return Array.from(new Set((Array.isArray(value) ? value : []).map(normalizeAgentId).filter(Boolean)));
+}
+
+function isPhoPhongManager(user) {
+  return normalizeAgentId(user?.lockedAgentId) === "pho_phong" || normalizeAgentId(user?.employeeId) === "pho_phong";
+}
+
+function getRequiredVisibleAgentIdsForUser(user) {
+  return isPhoPhongManager(user) ? PHO_PHONG_REQUIRED_VISIBLE_AGENTS : [];
+}
+
+function resolveVisibleAgentIdsForUser(user, visibleAgentIds) {
+  return dedupeAgentIds([
+    user?.lockedAgentId,
+    ...getRequiredVisibleAgentIdsForUser(user),
+    ...(Array.isArray(visibleAgentIds) ? visibleAgentIds : []),
+  ]);
+}
+
 function resolveUserDepartment(employeeId) {
   if (employeeId === "admin") return "All";
   if (employeeId === "giam_doc" || employeeId === "truong_phong") return "BanGiamDoc";
@@ -52,8 +85,9 @@ function buildUserAccessPolicy(user) {
   const employeeId = normalizeText(user.employeeId);
   const employeeName = normalizeText(user.employeeName);
   const lockedAgentId = normalizeAgentId(user.lockedAgentId) || normalizeAgentId(employeeId) || "main";
-  const visibleAgentIds = Array.from(
-    new Set([lockedAgentId, ...parseJsonArray(user.visibleAgentIds)].map(normalizeAgentId).filter(Boolean)),
+  const visibleAgentIds = resolveVisibleAgentIdsForUser(
+    { ...user, lockedAgentId, employeeId },
+    parseJsonArray(user.visibleAgentIds),
   );
   const canViewAllSessions = user.canViewAllSessions === true;
 
@@ -148,12 +182,9 @@ async function seedUsersFromConfigIfNeeded() {
 
     const matchedAccount = demoMap.get(employeeId);
     const canViewAllSessions = entry.canViewAllSessions === true;
-    const visibleAgentIds = Array.from(
-      new Set(
-        [entry.lockedAgentId, ...(Array.isArray(entry.visibleAgentIds) ? entry.visibleAgentIds : [])]
-          .map(normalizeAgentId)
-          .filter(Boolean),
-      ),
+    const visibleAgentIds = resolveVisibleAgentIdsForUser(
+      { lockedAgentId: entry.lockedAgentId, employeeId },
+      Array.isArray(entry.visibleAgentIds) ? entry.visibleAgentIds : [],
     );
 
     await pool.query(
@@ -182,9 +213,40 @@ async function seedUsersFromConfigIfNeeded() {
   }
 }
 
+async function ensureDefaultAssistantUser() {
+  await pool.query(
+    `INSERT INTO "system_users"
+      ("id", "email", "password", "employee_id", "employee_name", "role", "status",
+       "locked_agent_id", "can_view_all_sessions", "visible_agent_ids", "lock_agent",
+       "lock_session", "auto_connect")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false, $9, true, false, false)
+     ON CONFLICT ("id") DO UPDATE SET
+       "email" = EXCLUDED."email",
+       "employee_name" = EXCLUDED."employee_name",
+       "role" = EXCLUDED."role",
+       "locked_agent_id" = EXCLUDED."locked_agent_id",
+       "visible_agent_ids" = EXCLUDED."visible_agent_ids",
+       "updated_at" = NOW()`,
+    [
+      DEFAULT_ASSISTANT_USER.id,
+      DEFAULT_ASSISTANT_USER.email,
+      DEFAULT_ASSISTANT_USER.password,
+      DEFAULT_ASSISTANT_USER.employeeId,
+      DEFAULT_ASSISTANT_USER.employeeName,
+      DEFAULT_ASSISTANT_USER.role,
+      ACTIVE_STATUS,
+      DEFAULT_ASSISTANT_USER.lockedAgentId,
+      serializeJsonArray(resolveVisibleAgentIdsForUser(DEFAULT_ASSISTANT_USER, DEFAULT_ASSISTANT_USER.visibleAgentIds)),
+    ],
+  );
+}
+
 async function initializeUserStore() {
   await ensureSystemUsersTable();
   await seedUsersFromConfigIfNeeded();
+  await ensureDefaultAssistantUser();
+  await initializeAssistantAccessStore();
+  await syncUsersToConfig();
 }
 
 async function findUserByCredentials(email, password) {
@@ -290,7 +352,7 @@ function syncConfigUsers(users) {
     employeeName: user.employeeName,
     canViewAllSessions: user.canViewAllSessions === true,
     lockedAgentId: user.lockedAgentId,
-    visibleAgentIds: user.canViewAllSessions ? [] : user.visibleAgentIds,
+    visibleAgentIds: user.canViewAllSessions ? [] : resolveVisibleAgentIdsForUser(user, user.visibleAgentIds),
     lockAgent: user.lockAgent !== false,
     lockSession: user.lockSession === true,
     autoConnect: user.autoConnect === true,
@@ -347,9 +409,93 @@ async function deleteUser(userId, auth) {
   await syncUsersToConfig();
 }
 
+async function addVisibleAgentToUser(userId, agentId, auth) {
+  const target = await findUserById(userId);
+  assertManagerCanMutate(auth, target, "cap quyen agent cho");
+
+  const normalizedAgentId = normalizeAgentId(agentId);
+  if (!normalizedAgentId) {
+    const error = new Error("Invalid agentId");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const agentResult = await pool.query(
+    `SELECT "employee_id"
+     FROM "system_users"
+     WHERE "employee_id" = $1
+        OR "locked_agent_id" = $1
+     LIMIT 1`,
+    [normalizedAgentId],
+  );
+  if (!agentResult.rows[0]) {
+    const error = new Error("Agent not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const nextVisibleAgentIds = resolveVisibleAgentIdsForUser(target, [
+    ...(target.visibleAgentIds || []),
+    normalizedAgentId,
+  ]);
+
+  const result = await pool.query(
+    `UPDATE "system_users"
+     SET "visible_agent_ids" = $1,
+         "updated_at" = NOW()
+     WHERE "id" = $2
+     RETURNING *`,
+    [serializeJsonArray(nextVisibleAgentIds), userId],
+  );
+  await syncUsersToConfig();
+  return mapDbUser(result.rows[0]);
+}
+
+async function removeVisibleAgentFromUser(userId, agentId, auth) {
+  const target = await findUserById(userId);
+  assertManagerCanMutate(auth, target, "go quyen agent cua");
+
+  const normalizedAgentId = normalizeAgentId(agentId);
+  if (!normalizedAgentId) {
+    const error = new Error("Invalid agentId");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const lockedAgentId = normalizeAgentId(target.lockedAgentId);
+  if (normalizedAgentId === lockedAgentId) {
+    const error = new Error("Cannot remove the manager's primary agent");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (getRequiredVisibleAgentIdsForUser(target).includes(normalizedAgentId)) {
+    const error = new Error("Cannot remove default pho_phong workers");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const nextVisibleAgentIds = resolveVisibleAgentIdsForUser(
+    target,
+    (target.visibleAgentIds || []).filter((item) => normalizeAgentId(item) !== normalizedAgentId),
+  );
+
+  const result = await pool.query(
+    `UPDATE "system_users"
+     SET "visible_agent_ids" = $1,
+         "updated_at" = NOW()
+     WHERE "id" = $2
+     RETURNING *`,
+    [serializeJsonArray(nextVisibleAgentIds), userId],
+  );
+  await syncUsersToConfig();
+  return mapDbUser(result.rows[0]);
+}
+
 module.exports = {
   ACTIVE_STATUS,
   DISABLED_STATUS,
+  addVisibleAgentToUser,
   buildUserAccessPolicy,
   canManageUsers,
   deleteUser,
@@ -358,7 +504,7 @@ module.exports = {
   getLoginAttemptResult,
   initializeUserStore,
   listUsers,
+  removeVisibleAgentFromUser,
   syncUsersToConfig,
   updateUserStatus,
 };
-

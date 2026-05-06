@@ -91,6 +91,7 @@ export interface LoginResponse {
   token?: string | null;
   backendToken?: string | null;
   accessPolicy?: AccessPolicy;
+  bootstrapConfig?: BootstrapConfig;
 }
 
 export interface AuthState {
@@ -128,5 +129,21 @@ export interface UserStatsSummary {
 export interface UsersResponse {
   users: SystemUser[];
   stats: UserStatsSummary;
+}
+
+export interface AssistantAccessEntry {
+  employeeId: string;
+  employeeName: string | null;
+  email: string | null;
+  role: string | null;
+  status: string | null;
+  agentId: string;
+  enabled: boolean;
+  grantedBy: string | null;
+  updatedAt: string | null;
+}
+
+export interface AssistantAccessResponse {
+  access: AssistantAccessEntry[];
 }
 
