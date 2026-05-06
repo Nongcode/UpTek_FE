@@ -1,3 +1,4 @@
+
 import { AssistantAccessEntry, AssistantAccessResponse, BootstrapConfig, LoginResponse, UsersResponse } from "./types";
 
 const GATEWAY_BASE = "/api/gateway";
@@ -10,7 +11,7 @@ function buildBackendAuthHeaders(backendToken: string): HeadersInit {
 }
 
 export async function fetchBootstrapConfig(): Promise<BootstrapConfig> {
-  const res = await fetch(`${GATEWAY_BASE}/__openclaw/control-ui-config.json`);
+  const res = await fetch(buildGatewayProxyUrl("__openclaw/control-ui-config.json"));
   if (!res.ok) {
     throw new Error(`Failed to fetch bootstrap config: ${res.status}`);
   }
@@ -21,7 +22,7 @@ export async function login(
   email: string,
   password: string,
 ): Promise<LoginResponse> {
-  const res = await fetch(`${BACKEND_BASE}/auth/login`, {
+  const res = await fetch(buildBackendApiUrl("auth/login"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
@@ -55,9 +56,11 @@ export async function fetchUsers(backendToken: string): Promise<UsersResponse> {
   if (!res.ok) {
     const data = await res.json().catch(() => null);
     throw new Error(data?.error || `Load users failed with status ${res.status}`);
+
   }
   return res.json();
 }
+
 
 export async function updateUserStatus(
   backendToken: string,
@@ -192,7 +195,7 @@ export async function streamChatCompletion(
   };
 
   try {
-    const res = await fetch(`${GATEWAY_BASE}/v1/chat/completions`, {
+    const res = await fetch(buildGatewayProxyUrl("v1/chat/completions"), {
       method: "POST",
       headers,
       body: JSON.stringify(body),

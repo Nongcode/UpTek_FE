@@ -1,12 +1,24 @@
 import { Conversation, Message, Project } from "./types";
-import { BACKEND_BASE } from "./api";
+
+import { buildBackendApiUrl } from "./runtimeUrls";
+import { notifyBackendAuthExpired } from "./backendAuth";
 
 const STORAGE_PREFIX = "openclaw_chat_";
-const API_BASE = BACKEND_BASE;
+
 
 type BackendAuth = {
   backendToken: string;
 };
+
+export class BackendRequestError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "BackendRequestError";
+    this.status = status;
+  }
+}
 
 function buildAuthHeaders(auth: BackendAuth): HeadersInit {
   return {
@@ -18,7 +30,13 @@ async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Pro
   const response = await fetch(input, init);
   if (!response.ok) {
     const errorData = await response.json().catch(() => null);
-    throw new Error(errorData?.error?.message || `Request failed with status ${response.status}`);
+    if (response.status === 401) {
+      notifyBackendAuthExpired();
+    }
+    throw new BackendRequestError(
+      errorData?.error?.message || `Request failed with status ${response.status}`,
+      response.status,
+    );
   }
   return (await response.json()) as T;
 }
@@ -27,7 +45,13 @@ async function requestVoid(input: RequestInfo | URL, init?: RequestInit): Promis
   const response = await fetch(input, init);
   if (!response.ok) {
     const errorData = await response.json().catch(() => null);
-    throw new Error(errorData?.error?.message || `Request failed with status ${response.status}`);
+    if (response.status === 401) {
+      notifyBackendAuthExpired();
+    }
+    throw new BackendRequestError(
+      errorData?.error?.message || `Request failed with status ${response.status}`,
+      response.status,
+    );
   }
 }
 
@@ -37,24 +61,17 @@ export async function loadConversations(
   auth?: BackendAuth,
 ): Promise<Conversation[]> {
   if (!auth?.backendToken) {
-    return [];
+    throw new Error("Missing backend token");
   }
 
-  try {
-    const includeAutomation = options?.includeAutomation ? "1" : "0";
-    const params = new URLSearchParams({ includeAutomation });
-    if (options?.managerInstanceId) {
-      params.set("managerInstanceId", options.managerInstanceId);
-    }
-    return await requestJson<Conversation[]>(
-      `${API_BASE}/conversations/${employeeId}?${params.toString()}`,
-      {
-        headers: buildAuthHeaders(auth),
-      },
-    );
-  } catch {
-    return [];
-  }
+  const includeAutomation = options?.includeAutomation ? "1" : "0";
+  return requestJson<Conversation[]>(
+    `${buildBackendApiUrl(`conversations/${employeeId}`)}?includeAutomation=${includeAutomation}`,
+    {
+      headers: buildAuthHeaders(auth),
+    },
+  );
+
 }
 
 export async function saveConversations(
@@ -65,11 +82,20 @@ export async function saveConversations(
   void conversations;
 }
 
-export async function apiCreateConversation(conv: Conversation, auth: BackendAuth): Promise<void> {
-  await requestVoid(`${API_BASE}/conversations`, {
+export async function apiCreateConversation(
+  params: {
+    agentId: string;
+    lane?: "user" | "automation";
+    title?: string;
+    employeeId?: string;
+    workflowId?: string;
+  },
+  auth: BackendAuth,
+): Promise<Conversation> {
+  return requestJson<Conversation>(buildBackendApiUrl("conversations"), {
     method: "POST",
     headers: { "Content-Type": "application/json", ...buildAuthHeaders(auth) },
-    body: JSON.stringify(conv),
+    body: JSON.stringify(params),
   });
 }
 
@@ -78,7 +104,7 @@ export async function apiUpdateConversation(
   updates: Partial<Conversation>,
   auth: BackendAuth,
 ): Promise<void> {
-  await requestVoid(`${API_BASE}/conversations/${id}`, {
+  await requestVoid(buildBackendApiUrl(`conversations/${id}`), {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...buildAuthHeaders(auth) },
     body: JSON.stringify(updates),
@@ -86,7 +112,7 @@ export async function apiUpdateConversation(
 }
 
 export async function apiSaveMessages(messages: Message[], auth: BackendAuth): Promise<void> {
-  await requestVoid(`${API_BASE}/messages`, {
+  await requestVoid(buildBackendApiUrl("messages"), {
     method: "POST",
     headers: { "Content-Type": "application/json", ...buildAuthHeaders(auth) },
     body: JSON.stringify({ messages }),
@@ -94,11 +120,12 @@ export async function apiSaveMessages(messages: Message[], auth: BackendAuth): P
 }
 
 export async function apiDeleteConversation(id: string, auth: BackendAuth): Promise<void> {
-  await requestVoid(`${API_BASE}/conversations/${id}`, {
+  await requestVoid(buildBackendApiUrl(`conversations/${id}`), {
     method: "DELETE",
     headers: buildAuthHeaders(auth),
   });
 }
+
 
 export function createConversation(
   agentId: string,
@@ -132,7 +159,6 @@ export function createConversation(
     ...(managerInstanceId !== undefined ? { managerInstanceId } : {}),
   };
 }
-
 export function createMessage(
   role: "user" | "assistant" | "system" | "manager",
   content: string,
@@ -162,13 +188,9 @@ export function generateConversationTitle(messages: Message[]): string {
 }
 
 export async function loadAllConversationsGlobally(auth: BackendAuth): Promise<Conversation[]> {
-  try {
-    return await requestJson<Conversation[]>(`${API_BASE}/conversations-global`, {
-      headers: buildAuthHeaders(auth),
-    });
-  } catch {
-    return [];
-  }
+  return requestJson<Conversation[]>(buildBackendApiUrl("conversations-global"), {
+    headers: buildAuthHeaders(auth),
+  });
 }
 
 function getProjectsStorageKey(): string {

@@ -47,8 +47,10 @@ export function hydrateConversationLane(conversation: Conversation): Conversatio
 }
 
 export function extractAutomationWorkflowId(
-  conversation: Pick<Conversation, "id" | "sessionKey">,
+  conversation: Pick<Conversation, "id" | "sessionKey" | "workflowId">,
 ): string | null {
+  if (conversation.workflowId) return conversation.workflowId;
+
   const sessionKey = String(conversation.sessionKey || "");
   const id = String(conversation.id || "");
 

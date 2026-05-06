@@ -2,9 +2,12 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import { buildGatewayProxyUrl, getAdminDashboardUrl } from "@/lib/runtimeUrls";
 
 export default function DocsPage() {
   const [activeSection, setActiveSection] = useState("muc-dich");
+  const gatewayUrl = getAdminDashboardUrl();
+  const gatewayChatUrl = `${buildGatewayProxyUrl("chat")}?session=${encodeURIComponent("agent:pho_phong:main")}`;
 
   const navLinks = [
     { id: "muc-dich", label: "1. Mục đích tài liệu" },
@@ -106,7 +109,7 @@ export default function DocsPage() {
 
   return (
     <div className="docs-page-wrapper">
-      <Link href="http://192.168.35.210:18789/chat?session=agent%3Apho_phong%3Amain" className="docs-back-button">
+      <Link href={gatewayChatUrl} className="docs-back-button">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <line x1="19" y1="12" x2="5" y2="12" />
           <polyline points="12 19 5 12 12 5" />
@@ -159,7 +162,7 @@ export default function DocsPage() {
               <h2 className="doc-section-title">2. Thông tin truy cập</h2>
               <p className="doc-text">Truy cập hệ thống qua link mạng nội bộ:</p>
               <div className="command-code-wrapper" style={{ marginBottom: "1.5rem" }}>
-                <code className="command-code"><a href="http://192.168.35.210:18789" style={{ textDecoration: "none", color: "white" }}>http://192.168.35.210:18789</a></code>
+                <code className="command-code"><a href={gatewayUrl} style={{ textDecoration: "none", color: "white" }}>{gatewayUrl}</a></code>
               </div>
               <div className="info-box important">
                 <div className="info-box-title">⚠️ Yêu cầu bắt buộc</div>
@@ -324,7 +327,7 @@ export default function DocsPage() {
                 <div className="step-item">
                   <div className="step-number">1</div>
                   <div className="step-content">
-                    <p className="doc-text" style={{ margin: 0 }}>Truy cập đúng link: <strong>http://192.168.35.210:18789</strong></p>
+                    <p className="doc-text" style={{ margin: 0 }}>Truy cập đúng link: <strong>{gatewayUrl}</strong></p>
                   </div>
                 </div>
                 <div className="step-item">

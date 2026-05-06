@@ -417,10 +417,33 @@ async function buildCurrentAuthResponse(authPayload) {
   };
 }
 
+function buildRefreshResponse({ token, employeeId, employeeName }) {
+  const config = loadOpenClawConfig();
+  const expectedGatewayToken = normalizeText(config?.gateway?.auth?.token);
+  const incomingGatewayToken = normalizeText(token);
+  if (!expectedGatewayToken || !incomingGatewayToken || incomingGatewayToken !== expectedGatewayToken) {
+    return null;
+  }
+
+  const accessPolicy = resolveAccessPolicyForEmployee(config, employeeId, employeeName || employeeId);
+  if (!accessPolicy) {
+    return null;
+  }
+
+  return {
+    ok: true,
+    token: expectedGatewayToken,
+    backendToken: issueBackendToken(config, accessPolicy),
+    accessPolicy,
+  };
+}
+
 function extractBearerToken(req) {
   const authHeader = String(req.get("authorization") || "");
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
-  return match?.[1]?.trim() || "";
+  if (match?.[1]?.trim()) return match[1].trim();
+  // Fallback cho EventSource (không hỗ trợ custom headers)
+  return String(req.query?.token || "").trim();
 }
 
 function requireBackendAuth(req, res, next) {
@@ -437,7 +460,9 @@ function requireBackendAuth(req, res, next) {
 
 function optionalBackendAuth(req, res, next) {
   const config = loadOpenClawConfig();
+
   const queryToken = typeof req.query?.token === "string" ? req.query.token : "";
+
   const token = extractBearerToken(req) || queryToken;
   const payload = token ? verifyBackendToken(config, token) : null;
   if (payload) {
@@ -450,6 +475,7 @@ function optionalBackendAuth(req, res, next) {
 module.exports = {
   buildCurrentAuthResponse,
   buildLoginResponse,
+  buildRefreshResponse,
   canAccessConversation,
   canAccessEmployeeId,
   extractBearerToken,
