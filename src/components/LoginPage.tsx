@@ -38,7 +38,7 @@ export default function LoginPage() {
       await login(email, password);
     } catch (err) {
       setLoginError(
-        err instanceof Error ? err.message : "Đăng nhập thất bại"
+        err instanceof Error ? err.message : "Đăng nhập thất bại. Vui lòng thử lại sau"
       );
     } finally {
       setIsSubmitting(false);
