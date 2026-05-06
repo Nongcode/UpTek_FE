@@ -1,7 +1,8 @@
 require("dotenv").config();
 const crypto = require("crypto");
+const { getEnabledAgentIdsForEmployee } = require("./assistant-access");
 const { loadOpenClawConfig } = require("./openclaw-config");
-const { buildUserAccessPolicy, getLoginAttemptResult } = require("./user-management");
+const { buildUserAccessPolicy, findUserByEmployeeId, getLoginAttemptResult } = require("./user-management");
 // GP3: import isManagerAgent để check agent type động, không hardcode
 const { isManagerAgent } = require("./manager-instances");
 
@@ -114,6 +115,9 @@ function resolveManagerInstanceIdForEmployee(config, employeeId, employeeName) {
   }
   if (normalizedEmployeeId === "pho_phong_b") {
     return "mgr_pho_phong_B";
+  }
+  if (normalizedEmployeeId === "pho_phong_c") {
+    return "mgr_pho_phong_C";
   }
   return undefined;
 }
@@ -327,6 +331,20 @@ function canAccessConversation(auth, conversationLike) {
   return resolveAllowedAgentIds(auth).includes(agentId);
 }
 
+async function withEnabledPersonalAgents(accessPolicy) {
+  if (!accessPolicy?.employeeId) {
+    return accessPolicy;
+  }
+  const enabledAgentIds = await getEnabledAgentIdsForEmployee(accessPolicy.employeeId);
+  if (enabledAgentIds.length === 0) {
+    return accessPolicy;
+  }
+  return {
+    ...accessPolicy,
+    visibleAgentIds: dedupeAgentIds([...(accessPolicy.visibleAgentIds || []), ...enabledAgentIds]),
+  };
+}
+
 async function buildLoginResponse(email, password) {
   const config = loadOpenClawConfig();
   const loginAttempt = await getLoginAttemptResult(email, password);
@@ -344,21 +362,7 @@ async function buildLoginResponse(email, password) {
   }
 
   const matchedUser = loginAttempt.user;
-  const accessPolicyBase =
-    buildUserAccessPolicy(matchedUser) ||
-    resolveAccessPolicyForEmployee(config, matchedUser.employeeId, matchedUser.employeeName);
-  const resolvedManagerInstanceId = resolveManagerInstanceIdForEmployee(
-    config,
-    matchedUser.employeeId,
-    matchedUser.employeeName,
-  );
-  const accessPolicy =
-    accessPolicyBase && !accessPolicyBase.managerInstanceId && resolvedManagerInstanceId
-      ? {
-          ...accessPolicyBase,
-          managerInstanceId: resolvedManagerInstanceId,
-        }
-      : accessPolicyBase;
+  const accessPolicy = await buildCurrentAccessPolicy(config, matchedUser);
   if (!accessPolicy) {
     return null;
   }
@@ -368,6 +372,48 @@ async function buildLoginResponse(email, password) {
     token: normalizeText(config?.gateway?.auth?.token) || null,
     backendToken: issueBackendToken(config, accessPolicy),
     accessPolicy,
+    bootstrapConfig: config?.gateway?.controlUi || null,
+  };
+}
+
+async function buildCurrentAccessPolicy(config, matchedUser) {
+  const accessPolicyBase =
+    buildUserAccessPolicy(matchedUser) ||
+    resolveAccessPolicyForEmployee(config, matchedUser.employeeId, matchedUser.employeeName);
+  const resolvedManagerInstanceId = resolveManagerInstanceIdForEmployee(
+    config,
+    matchedUser.employeeId,
+    matchedUser.employeeName,
+  );
+  const baseAccessPolicy =
+    accessPolicyBase && !accessPolicyBase.managerInstanceId && resolvedManagerInstanceId
+      ? {
+          ...accessPolicyBase,
+          managerInstanceId: resolvedManagerInstanceId,
+        }
+      : accessPolicyBase;
+  const accessPolicy = await withEnabledPersonalAgents(baseAccessPolicy);
+  return accessPolicy || null;
+}
+
+async function buildCurrentAuthResponse(authPayload) {
+  const config = loadOpenClawConfig();
+  const matchedUser = await findUserByEmployeeId(authPayload?.employeeId);
+  if (!matchedUser || matchedUser.status === "disabled") {
+    return null;
+  }
+
+  const accessPolicy = await buildCurrentAccessPolicy(config, matchedUser);
+  if (!accessPolicy) {
+    return null;
+  }
+
+  return {
+    ok: true,
+    token: normalizeText(config?.gateway?.auth?.token) || null,
+    backendToken: issueBackendToken(config, accessPolicy),
+    accessPolicy,
+    bootstrapConfig: config?.gateway?.controlUi || null,
   };
 }
 
@@ -427,6 +473,7 @@ function optionalBackendAuth(req, res, next) {
 }
 
 module.exports = {
+  buildCurrentAuthResponse,
   buildLoginResponse,
   buildRefreshResponse,
   canAccessConversation,

@@ -14,6 +14,11 @@ import { getAdminDashboardUrl } from "@/lib/runtimeUrls";
 
 type AppMode = "chat" | "dashboard";
 
+const AGENT_LABELS: Record<string, string> = {
+  nv_assistant: "Trợ lý kinh doanh AI",
+  pho_phong_cskh: "Phó phòng CSKH",
+};
+
 export default function Home() {
   const router = useRouter();
   const {
@@ -80,6 +85,22 @@ export default function Home() {
   }, [accessPolicy, viewingAgentId]);
 
   useEffect(() => {
+    if (!accessPolicy || !viewingAgentId || accessPolicy.canViewAllSessions) {
+      return;
+    }
+
+    const allowedAgentIds = new Set([
+      accessPolicy.lockedAgentId,
+      ...(accessPolicy.visibleAgentIds || []),
+    ].filter(Boolean));
+
+    if (!allowedAgentIds.has(viewingAgentId)) {
+      setViewingAgentId(accessPolicy.lockedAgentId || "");
+      setShowAgentDropdown(false);
+    }
+  }, [accessPolicy, viewingAgentId]);
+
+  useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setShowAgentDropdown(false);
@@ -138,6 +159,28 @@ export default function Home() {
       employeeName: account.employeeName,
     }))
     .filter((account) => account.lockedAgentId);
+
+  const appendMissingVisibleAgents = (agentIds: string[]) => {
+    const existing = new Set(availableAgents.map((account) => account.lockedAgentId));
+    for (const agentId of agentIds) {
+      if (!agentId || existing.has(agentId)) {
+        continue;
+      }
+      availableAgents.push({
+        lockedAgentId: agentId,
+        label: AGENT_LABELS[agentId] || (agentId === accessPolicy?.lockedAgentId ? (employeeName || agentId) : agentId),
+        employeeName: AGENT_LABELS[agentId] || agentId,
+      });
+      existing.add(agentId);
+    }
+  };
+
+  if (accessPolicy) {
+    appendMissingVisibleAgents([
+      accessPolicy.lockedAgentId || "",
+      ...(accessPolicy.visibleAgentIds || []),
+    ]);
+  }
 
   if (!accessPolicy?.canViewAllSessions) {
     const visibleIds = accessPolicy?.visibleAgentIds || [];

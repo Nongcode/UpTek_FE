@@ -1,6 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { loadAllConversationsGlobally } from "@/lib/storage";
-import { deleteUser, fetchUsers, updateUserStatus } from "@/lib/api";
+import {
+  addVisibleAgentToUser,
+  deleteUser,
+  fetchUsers,
+  removeVisibleAgentFromUser,
+  updateUserStatus,
+} from "@/lib/api";
 import { SystemUser, UserStatsSummary } from "@/lib/types";
 
 const EMPTY_USER_STATS: UserStatsSummary = {
@@ -40,7 +46,33 @@ function normalizeKeyword(value: string | null | undefined) {
     .trim();
 }
 
+const AGENT_FUNCTION_SUMMARIES: Record<string, string> = {
+  nv_content: "Sản xuất nội dung, phân tích xu hướng và tối ưu hóa bài viết marketing.",
+  nv_media: "Sáng tạo hình ảnh và video chuyên nghiệp bằng trí tuệ nhân tạo (AI).",
+  nv_prompt: "Thiết kế và tinh chỉnh cấu trúc câu lệnh tối ưu cho các mô hình ngôn ngữ.",
+  nv_consultant: "Tư vấn khách hàng, giải đáp thắc mắc và tra cứu thông tin sản phẩm.",
+  nv_assistant: "Trợ lý kinh doanh AI: phân tích sản phẩm, thị trường, đối thủ, lập kế hoạch bán hàng và quảng bá Facebook.",
+  pho_phong: "Điều hành nhóm nhân viên, phê duyệt yêu cầu và quản lý luồng công việc.",
+  pho_phong_cskh: "Quản lý nhóm CSKH, điều phối và duyệt tư vấn từ nv_consultant.",
+  main: "Agent đa nhiệm xử lý các tác vụ tổng quát trên toàn hệ thống.",
+  giam_doc: "Giám sát toàn bộ hoạt động hệ thống và đưa ra các quyết định chiến lược.",
+};
+
+const PHO_PHONG_REQUIRED_AGENTS = ["nv_content", "nv_media", "nv_prompt"];
+const CSKH_MANAGER_REQUIRED_AGENTS = ["nv_consultant"];
+
 function resolveSalesDepartment(normalizedText: string) {
+  if (
+    /\bkd[\s_-]*2\b/.test(normalizedText)
+    || /\bkinh doanh[\s_-]*2\b/.test(normalizedText)
+    || /\btruong[_\s-]*phong[_\s-]*kd[\s_-]*2\b/.test(normalizedText)
+    || /\bpho[_\s-]*phong[_\s-]*3\b/.test(normalizedText)
+    || /\bpho[_\s-]*phong[_\s-]*4\b/.test(normalizedText)
+    || /\bpho[_\s-]*phong[_\s-]*c\b/.test(normalizedText)
+  ) {
+    return "sales-2";
+  }
+
   if (
     /\bkd[\s_-]*1\b/.test(normalizedText)
     || /\bkinh doanh[\s_-]*1\b/.test(normalizedText)
@@ -51,16 +83,6 @@ function resolveSalesDepartment(normalizedText: string) {
     || /\bpho[_\s-]*phong[_\s-]*2\b/.test(normalizedText)
   ) {
     return "sales-1";
-  }
-
-  if (
-    /\bkd[\s_-]*2\b/.test(normalizedText)
-    || /\bkinh doanh[\s_-]*2\b/.test(normalizedText)
-    || /\btruong[_\s-]*phong[_\s-]*kd[\s_-]*2\b/.test(normalizedText)
-    || /\bpho[_\s-]*phong[_\s-]*3\b/.test(normalizedText)
-    || /\bpho[_\s-]*phong[_\s-]*4\b/.test(normalizedText)
-  ) {
-    return "sales-2";
   }
 
   return "";
@@ -174,17 +196,68 @@ function isElevatedManager(user: SystemUser) {
   );
 }
 
+function isPeerManagerForDeputy(user: SystemUser) {
+  const employeeId = normalizeAgentId(user.employeeId);
+  const role = normalizeAgentId(user.role);
+  const lockedAgentId = normalizeAgentId(user.lockedAgentId);
+
+  return (
+    employeeId === "admin"
+    || employeeId === "giam_doc"
+    || employeeId === "truong_phong"
+    || employeeId.startsWith("pho_phong")
+    || role === "admin"
+    || role === "giam_doc"
+    || role === "truong_phong"
+    || role.startsWith("pho_phong")
+    || lockedAgentId === "main"
+    || lockedAgentId === "pho_phong"
+    || lockedAgentId === "pho_phong_cskh"
+  );
+}
+
+function normalizeAgentId(value: string | null | undefined) {
+  const normalized = normalizeKeyword(value).replace(/\s+/g, "_");
+  const normalizedAlias = normalized === "nv_promt" ? "nv_prompt" : normalized;
+  return /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(normalizedAlias) ? normalizedAlias : "";
+}
+
+function isPhoPhongManager(user: SystemUser) {
+  return normalizeAgentId(user.lockedAgentId) === "pho_phong" || normalizeAgentId(user.employeeId) === "pho_phong";
+}
+
+function isCskhManager(user: SystemUser) {
+  return normalizeAgentId(user.lockedAgentId) === "pho_phong_cskh" || normalizeAgentId(user.employeeId) === "pho_phong_cskh";
+}
+
+function resolveRequiredManagerAgents(manager: SystemUser) {
+  if (isCskhManager(manager)) {
+    return CSKH_MANAGER_REQUIRED_AGENTS;
+  }
+  return isPhoPhongManager(manager) ? PHO_PHONG_REQUIRED_AGENTS : [];
+}
+
+function canRemoveManagedAgent(manager: SystemUser, agentId: string) {
+  const normalizedAgentId = normalizeAgentId(agentId);
+  if (!normalizedAgentId || normalizedAgentId === normalizeAgentId(manager.lockedAgentId)) {
+    return false;
+  }
+  return !resolveRequiredManagerAgents(manager).includes(normalizedAgentId);
+}
+
 function resolveManagerSubordinates(manager: SystemUser, users: SystemUser[]) {
   const managerKey = normalizeKeyword(manager.employeeId);
   const managerRoleKey = normalizeKeyword(manager.role);
+  const isDeputyManager = isPhoPhongManager(manager) || isCskhManager(manager);
   const visibleIds = new Set(
-    [manager.lockedAgentId, ...(manager.visibleAgentIds || [])]
+    [manager.lockedAgentId, ...resolveRequiredManagerAgents(manager), ...(manager.visibleAgentIds || [])]
       .map((item) => normalizeKeyword(item))
       .filter(Boolean),
   );
 
   return users.filter((user) => {
     if (user.id === manager.id) return false;
+    if (isDeputyManager && isPeerManagerForDeputy(user)) return false;
 
     const userEmployeeId = normalizeKeyword(user.employeeId);
     const userRole = normalizeKeyword(user.role);
@@ -218,6 +291,70 @@ function EyeIcon() {
   );
 }
 
+function BackIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="action-icon">
+      <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ChatIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="action-icon">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
+function ZapIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="action-icon">
+      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+    </svg>
+  );
+}
+
+function BotIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="action-icon">
+      <rect x="3" y="11" width="18" height="10" rx="2" />
+      <circle cx="12" cy="5" r="2" />
+      <path d="M12 7v4" />
+      <line x1="8" y1="16" x2="8" y2="16" />
+      <line x1="16" y1="16" x2="16" y2="16" />
+    </svg>
+  );
+}
+
+function UsersIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="action-icon">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="action-icon">
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  );
+}
+
+function FilterIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="action-icon">
+      <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+    </svg>
+  );
+}
+
 export default function DashboardArea({ backendToken }: { backendToken: string | null }) {
   const [conversationStats, setConversationStats] = useState({
     totalChats: 0,
@@ -231,6 +368,14 @@ export default function DashboardArea({ backendToken }: { backendToken: string |
   const [userActionError, setUserActionError] = useState<string | null>(null);
   const [pendingUserId, setPendingUserId] = useState<string | null>(null);
   const [selectedManagerId, setSelectedManagerId] = useState<string | null>(null);
+  const [showAddSubordinateAgents, setShowAddSubordinateAgents] = useState(false);
+  const [pendingVisibleAgentId, setPendingVisibleAgentId] = useState<string | null>(null);
+  const [pendingRemoveVisibleAgentId, setPendingRemoveVisibleAgentId] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [filterRole, setFilterRole] = useState<string | null>(null);
+  const [filterGroup, setFilterGroup] = useState<string | null>(null);
+  const [filterStatus, setFilterStatus] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -300,7 +445,23 @@ export default function DashboardArea({ backendToken }: { backendToken: string |
     [conversationStats.agentBreakdown],
   );
 
-  const groupedUsers = useMemo(() => groupUsers(users), [users]);
+  const filteredUsers = useMemo(() => {
+    return users.filter((user) => {
+      const matchesSearch = !searchTerm
+        || user.employeeName.toLowerCase().includes(searchTerm.toLowerCase())
+        || user.email.toLowerCase().includes(searchTerm.toLowerCase())
+        || user.employeeId.toLowerCase().includes(searchTerm.toLowerCase())
+        || user.lockedAgentId?.toLowerCase().includes(searchTerm.toLowerCase());
+
+      const matchesRole = !filterRole || user.role === filterRole;
+      const matchesGroup = !filterGroup || resolveUserGroupMeta(user).id === filterGroup;
+      const matchesStatus = !filterStatus || user.status === filterStatus;
+
+      return matchesSearch && matchesRole && matchesGroup && matchesStatus;
+    });
+  }, [users, searchTerm, filterRole, filterGroup, filterStatus]);
+
+  const groupedUsers = useMemo(() => groupUsers(filteredUsers), [filteredUsers]);
   const selectedManagerDetail = useMemo<ManagerDetail | null>(() => {
     if (!selectedManagerId) return null;
     const manager = users.find((user) => user.id === selectedManagerId);
@@ -314,12 +475,82 @@ export default function DashboardArea({ backendToken }: { backendToken: string |
     () => groupUsers(selectedManagerDetail?.subordinates || []),
     [selectedManagerDetail],
   );
+  const assignableAgents = useMemo(() => {
+    if (!selectedManagerDetail || selectedManagerDetail.manager.canViewAllSessions) return [];
+
+    const manager = selectedManagerDetail.manager;
+    const ownedAgentIds = new Set(
+      [manager.lockedAgentId, ...resolveRequiredManagerAgents(manager), ...(manager.visibleAgentIds || [])]
+        .map(normalizeKeyword)
+        .filter(Boolean),
+    );
+    const seen = new Set<string>();
+
+    return users
+      .filter((user) => {
+        if (user.id === manager.id || user.status !== "active") return false;
+        if (resolveUserGroupMeta(user).id !== "back-office") return false;
+
+        const agentId = user.lockedAgentId || user.employeeId;
+        const normalizedAgentId = normalizeKeyword(agentId);
+        if (!normalizedAgentId || ownedAgentIds.has(normalizedAgentId) || seen.has(normalizedAgentId)) {
+          return false;
+        }
+        seen.add(normalizedAgentId);
+        return true;
+      })
+      .sort((left, right) => left.employeeName.localeCompare(right.employeeName, "vi"));
+  }, [selectedManagerDetail, users]);
 
   async function refreshUsers() {
     if (!backendToken) return;
     const result = await fetchUsers(backendToken);
     setUsers(result.users);
     setUserStats(result.stats);
+  }
+
+  async function handleAddVisibleAgent(agentUser: SystemUser) {
+    if (!backendToken || !selectedManagerDetail) return;
+    const agentId = agentUser.lockedAgentId || agentUser.employeeId;
+    const confirmed = window.confirm(
+      `Thêm ${agentUser.employeeName} (${agentId}) vào danh sách agent cấp dưới của ${selectedManagerDetail.manager.employeeName}?`,
+    );
+    if (!confirmed) return;
+
+    setPendingVisibleAgentId(agentId);
+    setUserActionError(null);
+    try {
+      await addVisibleAgentToUser(backendToken, selectedManagerDetail.manager.id, agentId);
+      await refreshUsers();
+      setShowAddSubordinateAgents(false);
+    } catch (error) {
+      setUserActionError(error instanceof Error ? error.message : "Thêm agent cấp dưới thất bại");
+    } finally {
+      setPendingVisibleAgentId(null);
+    }
+  }
+
+  async function handleRemoveVisibleAgent(agentId: string) {
+    if (!backendToken || !selectedManagerDetail) return;
+    if (!canRemoveManagedAgent(selectedManagerDetail.manager, agentId)) {
+      setUserActionError("Không thể gỡ agent mặc định của quản lý hoặc agent chính của tài khoản.");
+      return;
+    }
+    const confirmed = window.confirm(
+      `Gỡ ${agentId} khỏi danh sách agent cấp dưới của ${selectedManagerDetail.manager.employeeName}?`,
+    );
+    if (!confirmed) return;
+
+    setPendingRemoveVisibleAgentId(agentId);
+    setUserActionError(null);
+    try {
+      await removeVisibleAgentFromUser(backendToken, selectedManagerDetail.manager.id, agentId);
+      await refreshUsers();
+    } catch (error) {
+      setUserActionError(error instanceof Error ? error.message : "Gỡ agent cấp dưới thất bại");
+    } finally {
+      setPendingRemoveVisibleAgentId(null);
+    }
   }
 
   async function handleToggleUser(user: SystemUser) {
@@ -363,32 +594,40 @@ export default function DashboardArea({ backendToken }: { backendToken: string |
   const listView = (
     <>
       <div className="stats-grid">
-        <div className="stat-card glass-panel">
-          <div className="stat-icon">??</div>
+        <div className="stat-card glass-panel chat-stat">
+          <div className="stat-icon-wrapper">
+            <ChatIcon />
+          </div>
           <div className="stat-info">
             <span className="stat-value">{conversationStats.totalChats}</span>
             <span className="stat-label">Tổng cuộc hội thoại</span>
           </div>
         </div>
 
-        <div className="stat-card glass-panel">
-          <div className="stat-icon">??</div>
+        <div className="stat-card glass-panel message-stat">
+          <div className="stat-icon-wrapper">
+            <ZapIcon />
+          </div>
           <div className="stat-info">
             <span className="stat-value">{conversationStats.totalMessages}</span>
             <span className="stat-label">Tổng tin nhắn xử lý</span>
           </div>
         </div>
 
-        <div className="stat-card glass-panel">
-          <div className="stat-icon">??</div>
+        <div className="stat-card glass-panel agent-stat">
+          <div className="stat-icon-wrapper">
+            <BotIcon />
+          </div>
           <div className="stat-info">
             <span className="stat-value">{conversationStats.activeAgents}</span>
             <span className="stat-label">Agents hoạt động</span>
           </div>
         </div>
 
-        <div className="stat-card glass-panel">
-          <div className="stat-icon">??</div>
+        <div className="stat-card glass-panel user-stat">
+          <div className="stat-icon-wrapper">
+            <UsersIcon />
+          </div>
           <div className="stat-info">
             <span className="stat-value">{userStats.total}</span>
             <span className="stat-label">Tài khoản hệ thống</span>
@@ -397,65 +636,12 @@ export default function DashboardArea({ backendToken }: { backendToken: string |
       </div>
 
       <div className="dashboard-sections">
-        <div className="glass-panel section-card">
-          <h3>Hiệu suất theo Agent</h3>
-          <div className="bar-chart">
-            {Object.entries(conversationStats.agentBreakdown).map(([agentId, count]) => {
-              const percentage = (count / maxAgentCount) * 100;
-              return (
-                <div key={agentId} className="bar-row">
-                  <div className="bar-label">{agentId}</div>
-                  <div className="bar-track">
-                    <div className="bar-fill" style={{ width: `${percentage}%` }} />
-                  </div>
-                  <div className="bar-value">{count} chat</div>
-                </div>
-              );
-            })}
-            {Object.keys(conversationStats.agentBreakdown).length === 0 && (
-              <p className="empty-text">Chưa có dữ liệu hoạt động</p>
-            )}
-          </div>
-        </div>
-
-        <div className="glass-panel section-card">
-          <h3>Tổng quan tài khoản</h3>
-          <div className="account-overview-grid">
-            <div className="account-overview-item">
-              <span className="account-overview-label">Đang hoạt động</span>
-              <strong>{userStats.active}</strong>
-            </div>
-            <div className="account-overview-item">
-              <span className="account-overview-label">Đã tắt</span>
-              <strong>{userStats.disabled}</strong>
-            </div>
-            <div className="account-overview-item full-width">
-              <span className="account-overview-label">Phân bổ theo role</span>
-              <div className="role-chip-list">
-                {Object.entries(userStats.byRole).map(([role, count]) => (
-                  <span key={role} className="role-chip">{role}: {count}</span>
-                ))}
-                {Object.keys(userStats.byRole).length === 0 && <span className="empty-text">Chưa có tài khoản</span>}
-              </div>
-            </div>
-            <div className="account-overview-item full-width">
-              <span className="account-overview-label">Phân bổ theo nhóm tài khoản</span>
-              <div className="group-chip-list">
-                {groupedUsers.map((group) => (
-                  <span key={group.id} className="group-chip">
-                    {group.label}: {group.users.length}
-                  </span>
-                ))}
-                {groupedUsers.length === 0 && <span className="empty-text">Chưa có tài khoản</span>}
-              </div>
-            </div>
-          </div>
-        </div>
-
         <div className="glass-panel section-card dashboard-full-span">
           <div className="section-header-row">
             <h3>Quản lý tài khoản người dùng</h3>
-            {isUsersLoading && <span className="table-status-note">Đang tải...</span>}
+            <div className="table-header-actions">
+              <span className="table-status-note">{filteredUsers.length} kết quả</span>
+            </div>
           </div>
           {userActionError && <div className="dashboard-inline-error">{userActionError}</div>}
           <div className="user-groups-stack">
@@ -556,17 +742,24 @@ export default function DashboardArea({ backendToken }: { backendToken: string |
     <div className="dashboard-sections">
       <div className="glass-panel section-card dashboard-full-span">
         <div className="detail-page-header">
-          <button className="dashboard-action-btn detail-back-btn" onClick={() => setSelectedManagerId(null)}>
-            Quay lại danh sách
-          </button>
-          <div className="detail-manager-meta">
-            <h3>{selectedManagerDetail.manager.employeeName}</h3>
-            <div className="detail-manager-sub">
-              <span>{selectedManagerDetail.manager.employeeId}</span>
-              <span>•</span>
-              <span>{selectedManagerDetail.manager.email}</span>
+          <div className="detail-header-left">
+            <div className="detail-manager-meta">
+              <h3>{selectedManagerDetail.manager.employeeName}</h3>
+              <div className="detail-manager-sub">
+                <span>{selectedManagerDetail.manager.employeeId}</span>
+                <span>•</span>
+                <span>{selectedManagerDetail.manager.email}</span>
+              </div>
             </div>
           </div>
+          <button
+            className="dashboard-action-btn primary"
+            type="button"
+            disabled={selectedManagerDetail.manager.canViewAllSessions}
+            onClick={() => setShowAddSubordinateAgents(true)}
+          >
+            Thêm agent cấp dưới
+          </button>
         </div>
 
         <div className="manager-detail-grid">
@@ -591,16 +784,43 @@ export default function DashboardArea({ backendToken }: { backendToken: string |
             <div className="role-chip-list">
               {(selectedManagerDetail.manager.canViewAllSessions
                 ? ["Tất cả phiên làm việc"]
-                : selectedManagerDetail.manager.visibleAgentIds.length > 0
-                  ? selectedManagerDetail.manager.visibleAgentIds
-                  : [selectedManagerDetail.manager.lockedAgentId]
+                : Array.from(
+                    new Set([
+                      selectedManagerDetail.manager.lockedAgentId,
+                      ...resolveRequiredManagerAgents(selectedManagerDetail.manager),
+                      ...(selectedManagerDetail.manager.visibleAgentIds || []),
+                    ]),
+                  )
               ).map((item) => (
-                <span key={item} className="role-chip">{item}</span>
+                <span
+                  key={item}
+                  className={`role-chip managed-agent-chip ${canRemoveManagedAgent(selectedManagerDetail.manager, item) ? "removable" : "locked"}`}
+                >
+                  {item}
+                  {canRemoveManagedAgent(selectedManagerDetail.manager, item) && (
+                    <button
+                      type="button"
+                      className="managed-agent-remove"
+                      disabled={pendingRemoveVisibleAgentId === item}
+                      title={`Gỡ ${item}`}
+                      aria-label={`Gỡ ${item}`}
+                      onClick={() => void handleRemoveVisibleAgent(item)}
+                    >
+                      ×
+                    </button>
+                  )}
+                </span>
               ))}
             </div>
           </div>
         </div>
       </div>
+
+      {userActionError && (
+        <div className="glass-panel section-card dashboard-full-span">
+          <div className="dashboard-inline-error">{userActionError}</div>
+        </div>
+      )}
 
       <div className="glass-panel section-card dashboard-full-span">
         <div className="section-header-row">
@@ -662,13 +882,180 @@ export default function DashboardArea({ backendToken }: { backendToken: string |
           )}
         </div>
       </div>
+      {showAddSubordinateAgents && (
+        <div className="dashboard-modal-overlay" onClick={() => setShowAddSubordinateAgents(false)}>
+          <div className="dashboard-modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="dashboard-modal-header">
+              <h2>Thêm agent cấp dưới</h2>
+              <button className="dashboard-modal-close" onClick={() => setShowAddSubordinateAgents(false)}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="dashboard-modal-body">
+              <table className="modal-table user-table">
+                <thead>
+                  <tr>
+                    <th>Agent</th>
+                    <th>Role</th>
+                    <th>Agent ID</th>
+                    <th>Tóm tắt</th>
+                    <th>Hành động</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {assignableAgents.map((agentUser) => {
+                    const agentId = agentUser.lockedAgentId || agentUser.employeeId;
+                    const isPending = pendingVisibleAgentId === agentId;
+                    return (
+                      <tr key={agentUser.id}>
+                        <td>
+                          <div className="user-table-name">{agentUser.employeeName}</div>
+                          <div className="user-table-sub">{agentUser.email}</div>
+                        </td>
+                        <td><span className="role-chip">{agentUser.role}</span></td>
+                        <td>{agentId}</td>
+                        <td className="modal-summary-cell">
+                          {AGENT_FUNCTION_SUMMARIES[agentId] || `${agentUser.employeeName} hỗ trợ vận hành hệ thống qua agent ${agentId}.`}
+                        </td>
+                        <td>
+                          <button
+                            className="dashboard-action-btn primary"
+                            type="button"
+                            disabled={isPending}
+                            onClick={() => void handleAddVisibleAgent(agentUser)}
+                          >
+                            {isPending ? "Đang thêm..." : "Thêm"}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {assignableAgents.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="user-table-empty standalone">
+                        Không còn agent Back_office nào khả dụng để thêm.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 
   return (
     <div className="dashboard-container">
       <div className="dashboard-header">
-        <h1>{selectedManagerDetail ? "Chi tiết quản lý tài khoản" : "Trung tâm Điều hành"}</h1>
+        <div className="header-title-row main-dashboard-header">
+          <div className="header-left-group">
+            {selectedManagerId && (
+              <button
+                className="dashboard-icon-btn back-main-btn"
+                onClick={() => setSelectedManagerId(null)}
+                title="Quay lại danh sách"
+              >
+                <BackIcon />
+              </button>
+            )}
+            <h1>{selectedManagerDetail ? "Chi tiết quản lý tài khoản" : "Trung tâm Điều hành"}</h1>
+          </div>
+
+          {!selectedManagerId && (
+            <div className="dashboard-search-wrapper">
+              <div className="search-input-container glass-panel">
+                <SearchIcon />
+                <input
+                  type="text"
+                  placeholder="Tìm tên, email hoặc agent ID..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+                {searchTerm && (
+                  <button className="clear-search-btn" onClick={() => setSearchTerm("")}>?</button>
+                )}
+              </div>
+              <button
+                className={`dashboard-action-btn filter-toggle-btn ${isFilterOpen || filterRole || filterGroup || filterStatus ? "active" : ""}`}
+                onClick={() => setIsFilterOpen(!isFilterOpen)}
+              >
+                <FilterIcon />
+                <span>Bộ lọc</span>
+                {(filterRole || filterGroup || filterStatus) && <span className="filter-active-dot"></span>}
+              </button>
+
+              {isFilterOpen && (
+                <div className="advanced-filter-dropdown glass-panel animation-fade-scale">
+                  <div className="dropdown-filter-header">
+                    <h4>Bộ lọc nâng cao</h4>
+                    <button className="clear-filter-btn subtle" onClick={() => {
+                      setFilterRole(null);
+                      setFilterGroup(null);
+                      setFilterStatus(null);
+                    }}>Đặt lại</button>
+                  </div>
+
+                  <div className="dropdown-filter-body">
+                    <div className="compact-metric-row">
+                      <div
+                        className={`compact-metric-pill active ${filterStatus === "active" ? "selected" : ""}`}
+                        onClick={() => setFilterStatus(filterStatus === "active" ? null : "active")}
+                      >
+                        <span className="dot"></span>
+                        <span className="label">Đang hoạt động:</span>
+                        <span className="val">{userStats.active}</span>
+                      </div>
+                      <div
+                        className={`compact-metric-pill disabled ${filterStatus === "disabled" ? "selected" : ""}`}
+                        onClick={() => setFilterStatus(filterStatus === "disabled" ? null : "disabled")}
+                      >
+                        <span className="dot"></span>
+                        <span className="label">Đã tắt:</span>
+                        <span className="val">{userStats.disabled}</span>
+                      </div>
+                    </div>
+
+                    <div className="dropdown-dist-section">
+                      <span className="section-label">Phân bổ Vai trò</span>
+                      <div className="mini-chips-grid">
+                        {Object.entries(userStats.byRole).map(([role, count]) => (
+                          <div
+                            key={role}
+                            className={`mini-dist-chip ${filterRole === role ? "selected" : ""}`}
+                            onClick={() => setFilterRole(filterRole === role ? null : role)}
+                          >
+                            <span className="role">{role}</span>
+                            <span className="count">{count}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="dropdown-dist-section">
+                      <span className="section-label">Cấu trúc Nhóm</span>
+                      <div className="mini-chips-grid">
+                        {groupUsers(users).map((group) => (
+                          <div
+                            key={group.id}
+                            className={`mini-dist-chip group-variant ${filterGroup === group.id ? "selected" : ""}`}
+                            onClick={() => setFilterGroup(filterGroup === group.id ? null : group.id)}
+                          >
+                            <span className="role">{group.label}</span>
+                            <span className="count">{group.users.length}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
         <p>
           {selectedManagerDetail
             ? `Xem các tài khoản cấp dưới thuộc phạm vi quản lý của ${selectedManagerDetail.manager.employeeName}.`

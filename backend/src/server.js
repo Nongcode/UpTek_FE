@@ -11,6 +11,7 @@ const createMediaLegacyRoutes = require('./routes/mediaLegacyRoutes');
 const mediaRoutes = require('./routes/mediaRoutes');
 
 const {
+  buildCurrentAuthResponse,
   buildLoginResponse,
   buildRefreshResponse,
   canAccessConversation,
@@ -21,12 +22,19 @@ const {
 const {
   ACTIVE_STATUS,
   DISABLED_STATUS,
+  addVisibleAgentToUser,
   canManageUsers,
   deleteUser,
   initializeUserStore,
   listUsers,
+  removeVisibleAgentFromUser,
   updateUserStatus,
 } = require("./user-management");
+const {
+  createAssistantSchedule,
+  listAssistantAccess,
+  setAssistantAccess,
+} = require("./assistant-access");
 const { injectAutomationMessage } = require("./gateway-sync");
 const {
   DEFAULT_MANAGER_INSTANCE_ID,
@@ -291,6 +299,13 @@ app.post('/api/auth/login', async (req, res) => {
   return res.json(result);
 });
 
+app.get("/api/auth/me", requireBackendAuth, async (req, res) => {
+  const result = await buildCurrentAuthResponse(req.auth);
+  if (!result) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  return res.json(result);
+});
 
 app.get("/api/users", requireBackendAuth, async (req, res) => {
   if (!canManageUsers(req.auth)) {
@@ -315,6 +330,30 @@ app.patch("/api/users/:id/status", requireBackendAuth, async (req, res) => {
   }
 });
 
+app.post("/api/users/:id/visible-agents", requireBackendAuth, async (req, res) => {
+  try {
+    const user = await addVisibleAgentToUser(req.params.id, req.body?.agentId, req.auth);
+    if (normalizeAgentId(req.body?.agentId) === "nv_assistant") {
+      await setAssistantAccess(user.employeeId, true, req.auth?.employeeId || "system");
+    }
+    return res.json({ success: true, user });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/users/:id/visible-agents/:agentId", requireBackendAuth, async (req, res) => {
+  try {
+    const user = await removeVisibleAgentFromUser(req.params.id, req.params.agentId, req.auth);
+    if (normalizeAgentId(req.params.agentId) === "nv_assistant") {
+      await setAssistantAccess(user.employeeId, false, req.auth?.employeeId || "system");
+    }
+    return res.json({ success: true, user });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ error: err.message });
+  }
+});
+
 app.delete("/api/users/:id", requireBackendAuth, async (req, res) => {
   try {
     await deleteUser(req.params.id, req.auth);
@@ -324,6 +363,57 @@ app.delete("/api/users/:id", requireBackendAuth, async (req, res) => {
 
   }
   return res.json(result);
+});
+
+app.get("/api/assistant/access", requireBackendAuth, async (req, res) => {
+  if (!canManageUsers(req.auth)) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  try {
+    const access = await listAssistantAccess();
+    return res.json({ access });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/assistant/access/:employeeId", requireBackendAuth, async (req, res) => {
+  if (!canManageUsers(req.auth)) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const employeeId = String(req.params.employeeId || "").trim();
+  if (req.auth?.employeeId === "giam_doc" && employeeId === "admin") {
+    return res.status(403).json({ error: "Giám đốc không được thao tác tài khoản admin" });
+  }
+
+  try {
+    const access = await setAssistantAccess(
+      employeeId,
+      req.body?.enabled === true,
+      req.auth?.employeeId || "system",
+    );
+    return res.json({ success: true, access });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ error: err.message });
+  }
+});
+
+app.post("/api/assistant/internal/schedules", async (req, res) => {
+  if (automationSyncToken) {
+    const incomingToken = req.get("x-automation-sync-token") || "";
+    if (incomingToken !== automationSyncToken) {
+      return res.status(401).json({ error: "Unauthorized automation sync token" });
+    }
+  }
+
+  try {
+    const result = await createAssistantSchedule(req.body || {});
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ error: err.message });
+  }
 });
 
 app.get("/api/conversations/:employeeId", requireBackendAuth, async (req, res) => {

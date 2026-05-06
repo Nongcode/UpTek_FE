@@ -2,18 +2,15 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { AuthState, AccessPolicy, BootstrapConfig } from "@/lib/types";
-import { fetchBootstrapConfig, login as apiLogin, refreshBackendAuth } from "@/lib/api";
-import {
-  BACKEND_AUTH_EXPIRED_EVENT,
-  getBackendTokenRemainingMs,
-  isBackendTokenExpired,
-  shouldRefreshBackendToken,
-} from "@/lib/backendAuth";
+
+import { fetchBootstrapConfig, fetchCurrentAuth, login as apiLogin } from "@/lib/api";
+
 
 interface AuthContextType extends AuthState {
   bootstrapConfig: BootstrapConfig | null;
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
+  refreshAuth: () => Promise<void>;
   isLoading: boolean;
   error: string | null;
 }
@@ -46,6 +43,22 @@ function saveAuthToStorage(state: AuthState): void {
 function clearAuthFromStorage(): void {
   if (typeof window === "undefined") return;
   sessionStorage.removeItem(AUTH_STORAGE_KEY);
+}
+
+function buildAuthStateFromResult(
+  result: { token?: string | null; backendToken?: string | null; accessPolicy?: AccessPolicy },
+  fallbackEmployeeName?: string | null,
+  fallbackEmployeeId?: string | null,
+): AuthState {
+  return {
+    isAuthenticated: true,
+    token: result.token || null,
+    backendToken: result.backendToken || null,
+    accessPolicy: result.accessPolicy || null,
+    employeeName: result.accessPolicy?.employeeName || fallbackEmployeeName || null,
+    employeeId: result.accessPolicy?.employeeId || fallbackEmployeeId || null,
+    managerInstanceId: result.accessPolicy?.managerInstanceId || null,
+  };
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -254,15 +267,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setError(null);
     try {
       const result = await apiLogin(email, password);
-      const newAuth: AuthState = {
-        isAuthenticated: true,
-        token: result.token || null,
-        backendToken: result.backendToken || null,
-        accessPolicy: result.accessPolicy || null,
-        employeeName: result.accessPolicy?.employeeName || email.split("@")[0],
-        employeeId: result.accessPolicy?.employeeId || email.split("@")[0],
-        managerInstanceId: result.accessPolicy?.managerInstanceId || null,
-      };
+      if (result.bootstrapConfig) {
+        setBootstrapConfig(result.bootstrapConfig);
+      }
+      const newAuth = buildAuthStateFromResult(result, email.split("@")[0], email.split("@")[0]);
       setAuth(newAuth);
       saveAuthToStorage(newAuth);
     } catch (err) {
@@ -274,6 +282,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setIsLoading(false);
     }
   }, []);
+
+  const refreshAuth = useCallback(async () => {
+    if (!auth.isAuthenticated || !auth.backendToken) {
+      return;
+    }
+
+    const result = await fetchCurrentAuth(auth.backendToken);
+    if (result.bootstrapConfig) {
+      setBootstrapConfig(result.bootstrapConfig);
+    }
+    const nextAuth = buildAuthStateFromResult(result, auth.employeeName, auth.employeeId);
+    setAuth(nextAuth);
+    saveAuthToStorage(nextAuth);
+  }, [auth.backendToken, auth.employeeId, auth.employeeName, auth.isAuthenticated]);
+
+  useEffect(() => {
+    if (!auth.isAuthenticated || !auth.backendToken) {
+      return;
+    }
+
+    const refreshSilently = () => {
+      refreshAuth().catch(() => {
+        // Keep the current session usable if the refresh endpoint is temporarily unavailable.
+      });
+    };
+
+    const intervalId = window.setInterval(refreshSilently, 10000);
+    window.addEventListener("focus", refreshSilently);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshSilently);
+    };
+  }, [auth.backendToken, auth.isAuthenticated, refreshAuth]);
 
   const logout = useCallback(() => {
     setAuth({
@@ -295,6 +337,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         bootstrapConfig,
         login,
         logout,
+        refreshAuth,
         isLoading,
         error,
       }}
