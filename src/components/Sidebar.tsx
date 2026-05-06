@@ -2,12 +2,14 @@
 
 import React, { useMemo, useState } from "react";
 import { Conversation } from "@/lib/types";
+import { SessionBoxConversation, WorkflowConversationGroup } from "@/hooks/useConversations";
 import SearchModal from "@/components/SearchModal";
 
 import Link from "next/link";
 
 interface SidebarProps {
-  conversations: Conversation[];
+  conversations: SessionBoxConversation[];
+  workflowGroups?: WorkflowConversationGroup[];
   activeConversationId: string | null;
   onSelectConversation: (id: string) => void;
   onNewConversation: () => void;
@@ -19,10 +21,12 @@ interface SidebarProps {
   onToggle: () => void;
   onOpenDashboard?: () => void;
   canViewAllSessions?: boolean;
+  createInFlight?: boolean;
 }
 
 export default function Sidebar({
   conversations,
+  workflowGroups = [],
   activeConversationId,
   onSelectConversation,
   onNewConversation,
@@ -34,77 +38,186 @@ export default function Sidebar({
   onToggle,
   onOpenDashboard,
   canViewAllSessions,
+  createInFlight = false,
 }: SidebarProps) {
   const [showSearchModal, setShowSearchModal] = useState(false);
+  const [expandedWorkflows, setExpandedWorkflows] = useState<Set<string>>(new Set());
+
   const getStatusLabel = (status?: Conversation["status"]) => {
     if (status === "pending_approval") return "Chờ duyệt";
     if (status === "approved") return "Hoàn tất";
     if (status === "cancelled") return "Đã hủy";
     if (status === "stopped") return "Đã dừng";
+    if (status === "error") return "Lỗi";
     return "Đang chạy";
   };
 
-  const sortedConversations = useMemo(() => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt), [conversations]);
+  const sortedConversations = useMemo(
+    () => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt),
+    [conversations],
+  );
 
+  const userConversations = useMemo(
+    () => sortedConversations.filter((conversation) => (conversation.lane || "user") !== "automation"),
+    [sortedConversations],
+  );
 
-
-  const groupConversations = (source: Conversation[]) => {
+  const groupByTime = (source: SessionBoxConversation[]) => {
     const now = Date.now();
-    const today: Conversation[] = [];
-    const yesterday: Conversation[] = [];
-    const thisWeek: Conversation[] = [];
-    const older: Conversation[] = [];
     const dayMs = 86400000;
+    const today: SessionBoxConversation[] = [];
+    const yesterday: SessionBoxConversation[] = [];
+    const thisWeek: SessionBoxConversation[] = [];
+    const older: SessionBoxConversation[] = [];
 
-    source.forEach((conv) => {
-      const age = now - conv.updatedAt;
-      if (age < dayMs) today.push(conv);
-      else if (age < 2 * dayMs) yesterday.push(conv);
-      else if (age < 7 * dayMs) thisWeek.push(conv);
-      else older.push(conv);
+    source.forEach((conversation) => {
+      const age = now - conversation.updatedAt;
+      if (age < dayMs) today.push(conversation);
+      else if (age < 2 * dayMs) yesterday.push(conversation);
+      else if (age < 7 * dayMs) thisWeek.push(conversation);
+      else older.push(conversation);
     });
 
     return { today, yesterday, thisWeek, older };
   };
 
-  const groups = groupConversations(sortedConversations);
+  const timeGroups = groupByTime(userConversations);
 
-  const renderGroup = (label: string, items: Conversation[]) => {
+  const agentLabel: Record<string, string> = {
+    nv_content: "NV Content",
+    nv_media: "NV Media",
+    nv_prompt: "NV Prompt",
+    media_video: "Media Video",
+    pho_phong: "Phó phòng",
+    truong_phong: "Trưởng phòng",
+  };
+
+  const renderConvItem = (conversation: Conversation, indent = false) => {
+    const isMember = conversation.role === "sub_agent";
+    return (
+      <div
+        key={conversation.id}
+        className={`sidebar-conversation ${conversation.id === activeConversationId ? "active" : ""} ${indent ? "sub-agent" : ""}`}
+        style={indent ? { paddingLeft: "1.75rem" } : undefined}
+        onClick={() => onSelectConversation(conversation.id)}
+      >
+        <div className="conversation-icon">
+          {isMember ? (
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" opacity={0.7}>
+              <path d="M8 1a4 4 0 100 8A4 4 0 008 1zM3 8a5 5 0 1110 0A5 5 0 013 8z" />
+            </svg>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M2.5 3A1.5 1.5 0 014 1.5h8A1.5 1.5 0 0113.5 3v7A1.5 1.5 0 0112 11.5H5.707l-2.854 2.854A.5.5 0 012 14V3.5 3z" />
+            </svg>
+          )}
+        </div>
+        <span className="conversation-title">
+          {indent ? (agentLabel[conversation.agentId] || conversation.agentId) : conversation.title}
+        </span>
+        {(conversation.lane === "automation") && (
+          <span className={`conversation-status-badge ${conversation.status || "active"}`}>
+            {getStatusLabel(conversation.status)}
+          </span>
+        )}
+        <button
+          className="conversation-delete"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDeleteConversation(conversation.id);
+          }}
+          title="Xóa cuộc trò chuyện"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
+            <path d="M5.5 1a.5.5 0 00-.5.5V2H2.5a.5.5 0 000 1h.538l.46 8.28A1.5 1.5 0 005 12.75h4a1.5 1.5 0 001.502-1.47L10.962 3h.538a.5.5 0 000-1H9v-.5a.5.5 0 00-.5-.5h-3zM6 2v-.5h2V2H6z" />
+          </svg>
+        </button>
+      </div>
+    );
+  };
+
+  const renderWorkflowBox = (group: WorkflowConversationGroup) => {
+    const rootConversation =
+      group.memberConversations.find((conversation) => conversation.id === group.rootConversationId)
+      || group.memberConversations.find((conversation) => conversation.role !== "sub_agent")
+      || group.memberConversations[0];
+    const subAgents = group.memberConversations.filter((conversation) => conversation.role === "sub_agent");
+    const hasSubAgents = subAgents.length > 0;
+    const isExpanded = expandedWorkflows.has(group.workflowId);
+    const selectedConversationId = rootConversation?.id || group.rootConversationId || group.memberConversationIds[0] || "";
+    const activeInGroup = activeConversationId ? group.memberConversationIds.includes(activeConversationId) : false;
+    const status = rootConversation?.status || group.memberConversations[0]?.status;
+
+    return (
+      <div key={group.workflowId} className="sidebar-workflow-group">
+        <div
+          className={`sidebar-conversation ${activeInGroup ? "active" : ""}`}
+          onClick={() => selectedConversationId && onSelectConversation(selectedConversationId)}
+        >
+          {hasSubAgents && (
+            <button
+              className="workflow-expand-btn"
+              style={{ background: "none", border: "none", cursor: "pointer", padding: "0 4px", flexShrink: 0 }}
+              onClick={(event) => {
+                event.stopPropagation();
+                setExpandedWorkflows((previous) => {
+                  const next = new Set(previous);
+                  next.has(group.workflowId) ? next.delete(group.workflowId) : next.add(group.workflowId);
+                  return next;
+                });
+              }}
+              title={isExpanded ? "Thu gọn" : "Mở rộng"}
+            >
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 10 10"
+                fill="currentColor"
+                style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s" }}
+              >
+                <path d="M3 1l4 4-4 4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          )}
+          <div className="conversation-icon">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M2.5 3A1.5 1.5 0 014 1.5h8A1.5 1.5 0 0113.5 3v7A1.5 1.5 0 0112 11.5H5.707l-2.854 2.854A.5.5 0 012 14V3.5 3z" />
+            </svg>
+          </div>
+          <span className="conversation-title">{group.title}</span>
+          <span className={`conversation-status-badge ${status || "active"}`}>
+            {getStatusLabel(status)}
+          </span>
+          <button
+            className="conversation-delete"
+            onClick={(event) => {
+              event.stopPropagation();
+              if (selectedConversationId) {
+                onDeleteConversation(selectedConversationId);
+              }
+            }}
+            title="Xóa luồng"
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
+              <path d="M5.5 1a.5.5 0 00-.5.5V2H2.5a.5.5 0 000 1h.538l.46 8.28A1.5 1.5 0 005 12.75h4a1.5 1.5 0 001.502-1.47L10.962 3h.538a.5.5 0 000-1H9v-.5a.5.5 0 00-.5-.5h-3zM6 2v-.5h2V2H6z" />
+            </svg>
+          </button>
+        </div>
+        {hasSubAgents && isExpanded && (
+          <div className="workflow-sub-agents">
+            {subAgents.sort((a, b) => a.createdAt - b.createdAt).map((conversation) => renderConvItem(conversation, true))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderTimeGroup = (label: string, items: SessionBoxConversation[]) => {
     if (items.length === 0) return null;
     return (
       <div className="sidebar-group">
         <div className="sidebar-group-label">{label}</div>
-        {items.map((conv) => (
-          <div
-            key={conv.id}
-            className={`sidebar-conversation ${conv.id === activeConversationId ? "active" : ""}`}
-            onClick={() => onSelectConversation(conv.id)}
-          >
-            <div className="conversation-icon">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                <path d="M2.5 3A1.5 1.5 0 014 1.5h8A1.5 1.5 0 0113.5 3v7A1.5 1.5 0 0112 11.5H5.707l-2.854 2.854A.5.5 0 012 14V3.5 3z" />
-              </svg>
-            </div>
-            <span className="conversation-title">{conv.title}</span>
-            {conv.lane === "automation" && (
-              <span className={`conversation-status-badge ${conv.status || "active"}`}>
-                {getStatusLabel(conv.status)}
-              </span>
-            )}
-            <button
-              className="conversation-delete"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDeleteConversation(conv.id);
-              }}
-              title="Xóa cuộc trò chuyện"
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
-                <path d="M5.5 1a.5.5 0 00-.5.5V2H2.5a.5.5 0 000 1h.538l.46 8.28A1.5 1.5 0 005 12.75h4a1.5 1.5 0 001.502-1.47L10.962 3h.538a.5.5 0 000-1H9v-.5a.5.5 0 00-.5-.5h-3zM6 2v-.5h2V2H6z" />
-              </svg>
-            </button>
-          </div>
-        ))}
+        {items.map((conversation) => renderConvItem(conversation))}
       </div>
     );
   };
@@ -114,13 +227,12 @@ export default function Sidebar({
       <div className={`sidebar-overlay ${!isCollapsed ? "visible" : ""}`} onClick={onToggle} />
       <aside className={`sidebar ${isCollapsed ? "collapsed" : ""}`}>
         <div className="sidebar-header">
-          <button className="new-chat-button full-width" onClick={onNewConversation}>
+          <button className="new-chat-button full-width" onClick={onNewConversation} disabled={createInFlight}>
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
               <path d="M9 3v12M3 9h12" />
             </svg>
             <span>Cuộc trò chuyện mới</span>
           </button>
-
         </div>
 
         <div className="sidebar-search-button-wrapper" style={{ margin: "0 auto" }}>
@@ -141,10 +253,23 @@ export default function Sidebar({
             </div>
           ) : (
             <>
-              {renderGroup("Hôm nay", groups.today)}
-              {renderGroup("Hôm qua", groups.yesterday)}
-              {renderGroup("Tuần này", groups.thisWeek)}
-              {renderGroup("Trước đó", groups.older)}
+              {userConversations.length > 0 && (
+                <>
+                  {renderTimeGroup("Hôm nay", timeGroups.today)}
+                  {renderTimeGroup("Hôm qua", timeGroups.yesterday)}
+                  {renderTimeGroup("Tuần này", timeGroups.thisWeek)}
+                  {renderTimeGroup("Trước đó", timeGroups.older)}
+                </>
+              )}
+
+              {workflowGroups.length > 0 && (
+                <div className="sidebar-group">
+                  {userConversations.length > 0 && (
+                    <div className="sidebar-group-label">Luồng tự động</div>
+                  )}
+                  {workflowGroups.map((group) => renderWorkflowBox(group))}
+                </div>
+              )}
             </>
           )}
         </nav>
@@ -152,9 +277,9 @@ export default function Sidebar({
         <div className="sidebar-footer">
           <div className="docs-nav-item">
             {canViewAllSessions && (
-              <button 
-                onClick={onOpenDashboard} 
-                className="docs-button" 
+              <button
+                onClick={onOpenDashboard}
+                className="docs-button"
                 style={{ marginBottom: "10px", width: "100%", border: "none", cursor: "pointer", textAlign: "left" }}
               >
                 <div className="docs-button-content">
@@ -184,7 +309,7 @@ export default function Sidebar({
                   <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
                   <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
                 </svg>
-                <span>Tài liệu HDSD</span>
+                <span>TÀI LIỆU HDSD</span>
               </div>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
@@ -214,7 +339,6 @@ export default function Sidebar({
             </button>
           </div>
         </div>
-
       </aside>
       <SearchModal
         isOpen={showSearchModal}

@@ -1,0 +1,12 @@
+Backend Server is running on http://localhost:3001
+Đã kết nối thành công tới PostgreSQL Database.
+Ensure Images table exists.
+[3:18:19 PM] POST /api/auth/login
+[3:18:19 PM] POST /api/chat/agent
+[3:18:24 PM] POST /api/chat/agent
+[3:20:44 PM] GET /api/conversations/pho_phong?includeAutomation=1
+[3:20:45 PM] GET /api/events?token=eyJlbXBsb3llZUlkIjoicGhvX3Bob25nIiwiZW1wbG95ZWVOYW1lIjoiUGjDsyBwaMOybmciLCJjb21wYW55SWQiOiJVcFRlayIsImRlcGFydG1lbnRJZCI6IlBob25nTWFya2V0aW5nIiwibG9ja2VkQWdlbnRJZCI6InBob19waG9uZyIsInZpc2libGVBZ2VudElkcyI6WyJwaG9fcGhvbmciLCJudl9jb250ZW50IiwibnZfbWVkaWEiLCJudl9wcm9tcHQiLCJtZWRpYV92aWRlbyJdLCJjYW5WaWV3QWxsU2Vzc2lvbnMiOmZhbHNlLCJpYXQiOjE3NzY4MjM5MDYyNjYsImV4cCI6MTc3Njg2NzEwNjI2Nn0.oA7wiV8rdp5IR3x35dvp-CapBaO9acIUyvzfqY7gAa8
+[3:20:50 PM] DELETE /api/conversations/conv_1776845425361_1zdl035
+[3:20:51 PM] GET /api/events?token=eyJlbXBsb3llZUlkIjoicGhvX3Bob25nIiwiZW1wbG95ZWVOYW1lIjoiUGjDsyBwaMOybmciLCJjb21wYW55SWQiOiJVcFRlayIsImRlcGFydG1lbnRJZCI6IlBob25nTWFya2V0aW5nIiwibG9ja2VkQWdlbnRJZCI6InBob19waG9uZyIsInZpc2libGVBZ2VudElkcyI6WyJwaG9fcGhvbmciLCJudl9jb250ZW50IiwibnZfbWVkaWEiLCJudl9wcm9tcHQiLCJtZWRpYV92aWRlbyJdLCJjYW5WaWV3QWxsU2Vzc2lvbnMiOmZhbHNlLCJpYXQiOjE3NzY4MjM5MDYyNjYsImV4cCI6MTc3Njg2NzEwNjI2Nn0.oA7wiV8rdp5IR3x35dvp-CapBaO9acIUyvzfqY7gAa8
+[3:20:53 PM] DELETE /api/conversations/conv_1776844805290_ftovb06
+[3:20:55 PM] POST /api/conversations
